@@ -128,7 +128,7 @@ static GUID                  guidDevs;
 char di_disabled = 0;
 static char di_devacquired;
 static HANDLE di_inputevt = 0;
-static int32_t joyblast=0;
+//static int32_t joyblast=0;
 
 static struct
 {
@@ -301,7 +301,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, int nC
     }
 
     // carve up the command line into more recognizable pieces
-    argvbuf = Bstrdup(GetCommandLine());
+    argvbuf = Xstrdup(GetCommandLine());
     _buildargc = 0;
     if (argvbuf)
     {
@@ -363,7 +363,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, int nC
         }
         *wp = 0;
 
-        _buildargv = (const char **)Bmalloc(sizeof(char *)*(_buildargc+1));
+        _buildargv = (const char **)Xmalloc(sizeof(char *)*(_buildargc+1));
         wp = argvbuf;
         for (i=0; i<_buildargc; i++,wp++)
         {
@@ -410,13 +410,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, int nC
 
     win_close();
 
-    Bfree(argvbuf);
+    Xfree(argvbuf);
 
     return r;
 }
 
 
-static int32_t set_maxrefreshfreq(osdfuncparm_t const * const parm)
+static int32_t set_maxrefreshfreq(osdcmdptr_t parm)
 {
     int32_t freq;
     if (parm->numparms == 0)
@@ -685,8 +685,6 @@ int32_t handleevents(void)
 //
 int32_t initinput(void)
 {
-    int32_t i;
-
     Win_GetOriginalLayoutName();
     Win_SetKeyboardLayoutUS(1);
 
@@ -860,7 +858,8 @@ void releaseallbuttons(void)
         for (i=0; i<32; i++)
             if (joystick.bits & (1<<i)) joystick.pCallback(i+1, 0);
     }
-    joystick.bits = joyblast = 0;
+    joystick.bits = 0;
+    //joyblast = 0;
 
     for (i=0; i<NUMKEYS; i++)
     {
@@ -889,7 +888,7 @@ static BOOL CALLBACK InitDirectInput_enum(LPCDIDEVICEINSTANCE lpddi, LPVOID pvRe
         return DIENUM_CONTINUE;
 
     inputdevices |= 4;
-    d = "CONTROLLER"
+    d = "CONTROLLER";
     Bmemcpy(&guidDevs, &lpddi->guidInstance, sizeof(GUID));
 
     initprintf("    * %s: %s\n", d, lpddi->tszProductName);
@@ -905,7 +904,7 @@ static BOOL CALLBACK InitDirectInput_enumobjects(LPCDIDEVICEOBJECTINSTANCE lpddo
     {
         //initprintf(" Axis: %s (dwOfs=%d)\n", lpddoi->tszName, lpddoi->dwOfs);
 
-        axisdefs[ typecounts[0] ].name = Bstrdup(lpddoi->tszName);
+        axisdefs[ typecounts[0] ].name = Xstrdup(lpddoi->tszName);
         axisdefs[ typecounts[0] ].ofs = lpddoi->dwOfs;
 
         typecounts[0]++;
@@ -914,7 +913,7 @@ static BOOL CALLBACK InitDirectInput_enumobjects(LPCDIDEVICEOBJECTINSTANCE lpddo
     {
         //initprintf(" Button: %s (dwOfs=%d)\n", lpddoi->tszName, lpddoi->dwOfs);
 
-        buttondefs[ typecounts[1] ].name = Bstrdup(lpddoi->tszName);
+        buttondefs[ typecounts[1] ].name = Xstrdup(lpddoi->tszName);
         buttondefs[ typecounts[1] ].ofs = lpddoi->dwOfs;
 
         typecounts[1]++;
@@ -923,7 +922,7 @@ static BOOL CALLBACK InitDirectInput_enumobjects(LPCDIDEVICEOBJECTINSTANCE lpddo
     {
         //initprintf(" POV: %s (dwOfs=%d)\n", lpddoi->tszName, lpddoi->dwOfs);
 
-        hatdefs[ typecounts[2] ].name = Bstrdup(lpddoi->tszName);
+        hatdefs[ typecounts[2] ].name = Xstrdup(lpddoi->tszName);
         hatdefs[ typecounts[2] ].ofs = lpddoi->dwOfs;
 
         typecounts[2]++;
@@ -1036,18 +1035,18 @@ static BOOL InitDirectInput(void)
         else if (result != DI_OK) initprintf("    Fetched controller capabilities with warning: %s\n",GetDInputError(result));
 
         joystick.numAxes    = (uint8_t)didc.dwAxes;
-        joystick.numButtons = min(32,(uint8_t)didc.dwButtons);
+        joystick.numButtons = min<uint8_t>(32,didc.dwButtons);
         joystick.numHats    = (uint8_t)didc.dwPOVs;
         initprintf("Controller has %d axes, %d buttons, and %d hat(s).\n",joystick.numAxes,joystick.numButtons,joystick.numHats);
 
-        axisdefs = (struct _joydef *)Bcalloc(didc.dwAxes, sizeof(struct _joydef));
-        buttondefs = (struct _joydef *)Bcalloc(didc.dwButtons, sizeof(struct _joydef));
+        axisdefs = (struct _joydef *)Xcalloc(didc.dwAxes, sizeof(struct _joydef));
+        buttondefs = (struct _joydef *)Xcalloc(didc.dwButtons, sizeof(struct _joydef));
         if (didc.dwPOVs)
-            hatdefs = (struct _joydef *)Bcalloc(didc.dwPOVs, sizeof(struct _joydef));
+            hatdefs = (struct _joydef *)Xcalloc(didc.dwPOVs, sizeof(struct _joydef));
 
-        joystick.pAxis = (int32_t *)Bcalloc(didc.dwAxes, sizeof(int32_t));
+        joystick.pAxis = (int32_t *)Xcalloc(didc.dwAxes, sizeof(int32_t));
         if (didc.dwPOVs)
-            joystick.pHat = (int32_t *)Bcalloc(didc.dwPOVs, sizeof(int32_t));
+            joystick.pHat = (int32_t *)Xcalloc(didc.dwPOVs, sizeof(int32_t));
 
         result = IDirectInputDevice7_EnumObjects(dev2, InitDirectInput_enumobjects, (LPVOID)typecounts, DIDFT_ALL);
         if (FAILED(result)) { IDirectInputDevice7_Release(dev2); HorribleDInputDeath("Failed getting controller features", result); }
@@ -1075,17 +1074,17 @@ static void UninitDirectInput(void)
 
     if (axisdefs)
     {
-        for (i=joystick.numAxes-1; i>=0; i--) Bfree(axisdefs[i].name);
+        for (i=joystick.numAxes-1; i>=0; i--) Xfree(axisdefs[i].name);
         DO_FREE_AND_NULL(axisdefs);
     }
     if (buttondefs)
     {
-        for (i=joystick.numButtons-1; i>=0; i--) Bfree(buttondefs[i].name);
+        for (i=joystick.numButtons-1; i>=0; i--) Xfree(buttondefs[i].name);
         DO_FREE_AND_NULL(buttondefs);
     }
     if (hatdefs)
     {
-        for (i=joystick.numHats-1; i>=0; i--) Bfree(hatdefs[i].name);
+        for (i=joystick.numHats-1; i>=0; i--) Xfree(hatdefs[i].name);
         DO_FREE_AND_NULL(hatdefs);
     }
 
@@ -1149,6 +1148,10 @@ const char *joyGetName(int32_t what, int32_t num)
     default:
         return NULL;
     }
+}
+
+void joyScanDevices()
+{
 }
 
 //
@@ -1371,132 +1374,6 @@ static const char *GetDInputError(HRESULT code)
 
 
 //-------------------------------------------------------------------------------------------------
-//  TIMER
-//=================================================================================================
-
-static int32_t timerlastsample=0;
-int32_t timerticspersec=0;
-static double msperu64tick = 0;
-static void (*usertimercallback)(void) = NULL;
-
-//  This timer stuff is all Ken's idea.
-
-//
-// installusertimercallback() -- set up a callback function to be called when the timer is fired
-//
-void (*timerSetCallback(void (*callback)(void)))(void)
-{
-    void (*oldtimercallback)(void);
-
-    oldtimercallback = usertimercallback;
-    usertimercallback = callback;
-
-    return oldtimercallback;
-}
-
-
-//
-// inittimer() -- initialize timer
-//
-int32_t timerInit(int32_t tickspersecond)
-{
-    int64_t t;
-
-    if (win_timerfreq) return 0;	// already installed
-
-    //    initprintf("Initializing timer\n");
-
-    t = win_inittimer();
-    if (t < 0)
-        return t;
-
-    timerticspersec = tickspersecond;
-    QueryPerformanceCounter((LARGE_INTEGER *)&t);
-    timerlastsample = (int32_t)(t*timerticspersec / win_timerfreq);
-
-    usertimercallback = NULL;
-
-    msperu64tick = 1000.0 / (double)timerGetFreqU64();
-
-    return 0;
-}
-
-//
-// uninittimer() -- shut down timer
-//
-void timerUninit(void)
-{
-    if (!win_timerfreq) return;
-
-    win_timerfreq=0;
-    timerticspersec = 0;
-
-    msperu64tick = 0;
-}
-
-//
-// sampletimer() -- update totalclock
-//
-void timerUpdate(void)
-{
-    int64_t i;
-    int32_t n;
-
-    if (!win_timerfreq) return;
-
-    QueryPerformanceCounter((LARGE_INTEGER *)&i);
-    n = (int32_t)((i*timerticspersec / win_timerfreq) - timerlastsample);
-
-    if (n <= 0) return;
-
-    totalclock += n;
-    timerlastsample += n;
-
-    if (usertimercallback) for (; n>0; n--) usertimercallback();
-}
-
-
-//
-// getticks() -- returns the windows ticks count
-//
-uint32_t timerGetTicks(void)
-{
-    int64_t i;
-    if (win_timerfreq == 0) return 0;
-    QueryPerformanceCounter((LARGE_INTEGER *)&i);
-    return (uint32_t)(i*longlong(1000)/win_timerfreq);
-}
-
-// high-resolution timers for profiling
-uint64_t timerGetTicksU64(void)
-{
-    return win_getu64ticks();
-}
-
-uint64_t timerGetFreqU64(void)
-{
-    return win_timerfreq;
-}
-
-// Returns the time since an unspecified starting time in milliseconds.
-ATTRIBUTE((flatten))
-double timerGetHiTicks(void)
-{
-    return (double)timerGetTicksU64() * msperu64tick;
-}
-
-//
-// gettimerfreq() -- returns the number of ticks per second the timer is configured to generate
-//
-int32_t timerGetFreq(void)
-{
-    return timerticspersec;
-}
-
-
-
-
-//-------------------------------------------------------------------------------------------------
 //  VIDEO
 //=================================================================================================
 
@@ -1593,10 +1470,7 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
     int32_t modenum;
 
     if ((fs == fullscreen) && (x == xres) && (y == yres) && (c == bpp) && !videomodereset)
-    {
-        OSD_ResizeDisplay(xres,yres);
         return 0;
-    }
 
     modenum = videoCheckMode(&x,&y,c,fs,0);
     if (modenum < 0) return -1;
@@ -1638,7 +1512,6 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
     if (inp) AcquireInputDevices(1);
     modechange=1;
     videomodereset = 0;
-    OSD_ResizeDisplay(xres,yres);
 
     return 0;
 }
@@ -1755,8 +1628,8 @@ static int sortmodes(const void *a_, const void *b_)
 {
     int32_t x;
 
-    const struct validmode_t *a = (const struct validmode_t *)a_;
-    const struct validmode_t *b = (const struct validmode_t *)b_;
+    const struct validmode_t *a = (const struct validmode_t *)b_;
+    const struct validmode_t *b = (const struct validmode_t *)a_;
 
     if ((x = a->fs   - b->fs)   != 0) return x;
     if ((x = a->bpp  - b->bpp)  != 0) return x;
@@ -1856,9 +1729,42 @@ void videoBeginDrawing(void)
     if (lockcount++ > 0)
         return;		// already locked
 
-    if (offscreenrendering) return;
+    static intptr_t backupFrameplace = 0;
 
-    frameplace = fullscreen ? (intptr_t)lpOffscreen : (intptr_t)lpPixels;
+    if (inpreparemirror)
+    {
+        //POGO: if we are offscreenrendering and we need to render a mirror
+        //      or we are rendering a mirror and we start offscreenrendering,
+        //      backup our offscreen target so we can restore it later
+        //      (but only allow one level deep,
+        //       i.e. no viewscreen showing a camera showing a mirror that reflects the same viewscreen and recursing)
+        if (offscreenrendering)
+        {
+            if (!backupFrameplace)
+                backupFrameplace = frameplace;
+            else if (frameplace != (intptr_t)mirrorBuffer &&
+                     frameplace != backupFrameplace)
+                return;
+        }
+
+        frameplace = (intptr_t)mirrorBuffer;
+
+        if (offscreenrendering)
+            return;
+    }
+    else if (offscreenrendering)
+    {
+        if (backupFrameplace)
+        {
+            frameplace = backupFrameplace;
+            backupFrameplace = 0;
+        }
+        return;
+    }
+    else
+    {
+        frameplace = fullscreen ? (intptr_t)lpOffscreen : (intptr_t)lpPixels;
+    }
 
     if (!modechange) return;
 
@@ -2034,7 +1940,7 @@ int32_t videoUpdatePalette(int32_t start, int32_t num)
 
     if (num > 0)
     {
-        rgb = (RGBQUAD *)Bmalloc(sizeof(RGBQUAD)*num);
+        rgb = (RGBQUAD *)Xmalloc(sizeof(RGBQUAD)*num);
         for (i=start, n=0; n<num; i++, n++)
         {
             rgb[n].rgbBlue = lpal.palPalEntry[i].peBlue;
@@ -2044,7 +1950,7 @@ int32_t videoUpdatePalette(int32_t start, int32_t num)
         }
 
         SetDIBColorTable(hDCSection, start, num, rgb);
-        Bfree(rgb);
+        Xfree(rgb);
     }
 
     return 0;
@@ -2139,7 +2045,7 @@ int32_t videoSetGamma(void)
         if (gamma != 1) val = pow(val, invgamma) / norm;
         val += bright * 128;
 
-        gammaTable.red[i] = gammaTable.green[i] = gammaTable.blue[i] = (WORD)max(0.f,(double)min(0xffff,val*256));
+        gammaTable.red[i] = gammaTable.green[i] = gammaTable.blue[i] = (uint16_t)max(0.f, min<float>(65535.f, val * 256.f));
     }
 
     return setgammaramp(&gammaTable);
@@ -2223,7 +2129,7 @@ static BOOL InitDirectDraw(void)
     }
 
     // get the pointer to DirectDrawEnumerate
-    aDirectDrawEnumerate = (HRESULT(WINAPI *)(LPDDENUMCALLBACK, LPVOID))GetProcAddress(hDDrawDLL, "DirectDrawEnumerateA");
+    aDirectDrawEnumerate = (decltype(aDirectDrawEnumerate))GetProcAddress(hDDrawDLL, "DirectDrawEnumerateA");
     if (!aDirectDrawEnumerate)
     {
         ShowErrorBox("Error fetching DirectDrawEnumerate()");
@@ -2236,7 +2142,7 @@ static BOOL InitDirectDraw(void)
     aDirectDrawEnumerate(InitDirectDraw_enum, NULL);
 
     // get the pointer to DirectDrawCreate
-    aDirectDrawCreate = (HRESULT(WINAPI *)(GUID *, LPDIRECTDRAW *, IUnknown *))GetProcAddress(hDDrawDLL, "DirectDrawCreate");
+    aDirectDrawCreate = (decltype(aDirectDrawCreate))GetProcAddress(hDDrawDLL, "DirectDrawCreate");
     if (!aDirectDrawCreate)
     {
         ShowErrorBox("Error fetching DirectDrawCreate()");
@@ -2411,7 +2317,7 @@ static int32_t SetupDirectDraw(int32_t width, int32_t height)
     }
 
     //    initprintf("  - Allocating offscreen buffer\n");
-    lpOffscreen = (char *)Bmalloc((width|1)*height);
+    lpOffscreen = (char *)Xmalloc((width|1)*height);
     if (!lpOffscreen)
     {
         ShowErrorBox("Failure allocating offscreen buffer");
@@ -2621,8 +2527,8 @@ static int32_t SetupOpenGL(int32_t width, int32_t height, int32_t bitspp)
         0,                             //Shift Bit Ignored
         0,                             //No Accumulation Buffer
         0,0,0,0,                       //Accumulation Bits Ignored
-        32,                            //16/24/32 Z-Buffer depth
-        1,                             //No Stencil Buffer
+        24,                            //16/24/32 Z-Buffer depth
+        8,                             //8-bit Stencil Buffer
         0,                             //No Auxiliary Buffer
         PFD_MAIN_PLANE,                //Main Drawing Layer
         0,                             //Reserved
@@ -2703,14 +2609,23 @@ static int32_t SetupOpenGL(int32_t width, int32_t height, int32_t bitspp)
             ReleaseOpenGL();
             return TRUE;
 #ifdef POLYMER
-        } else if (loadglulibrary(getenv("BUILD_GLULIB")))
+        }
+        else if (loadglulibrary(getenv("BUILD_GLULIB")))
         {
             initprintf("Failure loading GLU. GL modes are unavailable.\n");
                         nogl = 1;
                         ReleaseOpenGL();
                         return TRUE;
 #endif
-        } else
+        }
+        else if (GLVersion.major < 2)
+        {
+            initprintf("Your computer does not support OpenGL version 2 or greater. GL modes are unavailable.\n");
+            nogl = 1;
+            ReleaseOpenGL();
+            return TRUE;
+        }
+        else
         {
             glLoaded = 1;
         }
@@ -2741,7 +2656,6 @@ static int32_t SetupOpenGL(int32_t width, int32_t height, int32_t bitspp)
 
     polymost_glreset();
 
-    glEnable(GL_TEXTURE_2D);
     glShadeModel(GL_SMOOTH); //GL_FLAT
     glClearColor(0,0,0,0.5); //Black Background
     glHint(GL_PERSPECTIVE_CORRECTION_HINT,GL_NICEST); //Use FASTEST for ortho!
@@ -2817,7 +2731,7 @@ static int32_t SetupOpenGL(int32_t width, int32_t height, int32_t bitspp)
         glinfo.texcompr = 0;
 
         // process the extensions string and flag stuff we recognize
-        p = (GLubyte *)Bstrdup(glinfo.extensions);
+        p = (GLubyte *)Xstrdup(glinfo.extensions);
         p3 = p;
         while ((p2 = (GLubyte *)Bstrtoken(p3==p?(char *)p:NULL, " ", (char **)&p3, 1)) != NULL)
         {
@@ -2917,8 +2831,16 @@ static int32_t SetupOpenGL(int32_t width, int32_t height, int32_t bitspp)
             {
                 glinfo.sync = 1;
             }
+            else if (!Bstrcmp((char *)p2, "GL_ARB_depth_clamp"))
+            {
+                glinfo.depthclamp = 1;
+            }
+            else if (!Bstrcmp((char *)p2, "GL_ARB_clipcontrol"))
+            {
+                glinfo.clipcontrol = 1;
+            }
         }
-        Bfree(p);
+        Xfree(p);
     }
     numpages = 2;	// KJS 20031225: tell rotatesprite that it's double buffered!
 
@@ -3182,7 +3104,6 @@ static BOOL CreateAppWindow(int32_t modenum)
     //bytesperline = width;
 
     modechange = 1;
-    OSD_ResizeDisplay(xres,yres);
 
     UpdateWindow(hWindow);
 
@@ -3514,7 +3435,7 @@ static LRESULT CALLBACK WndProcCallback(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
                 }
                 realfs = fullscreen;
                 silentvideomodeswitch = 1;
-                videoSetGameMode(!fullscreen,xdim,ydim,bpp);
+                videoSetGameMode(!fullscreen,xres,yres,bpp,upscalefactor);
                 ShowWindow(hWindow, SW_MINIMIZE);
             }
             else if (appactive && realfs)
@@ -3527,7 +3448,7 @@ static LRESULT CALLBACK WndProcCallback(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
                 ShowWindow(hWindow, SW_RESTORE);
                 SetForegroundWindow(hWindow);
                 SetFocus(hWindow);
-                videoSetGameMode(realfs,xdim,ydim,bpp);
+                videoSetGameMode(realfs,xres,yres,bpp,upscalefactor);
                 silentvideomodeswitch = 0;
                 realfs = 0;
             }

@@ -206,6 +206,8 @@ static int32_t buildkeytranslationtable(void)
     MAP(SDL_SCANCODE_KP_3,		0x51);
     MAP(SDL_SCANCODE_KP_4,		0x4b);
     MAP(SDL_SCANCODE_KP_5,		0x4c);
+    MAP(SDL_SCANCODE_KP_CLEAR,		0x4c);
+    MAP(SDL_SCANCODE_CLEAR,		0x4c);
     MAP(SDL_SCANCODE_KP_6,		0x4d);
     MAP(SDL_SCANCODE_KP_7,		0x47);
     MAP(SDL_SCANCODE_KP_8,		0x48);
@@ -249,7 +251,7 @@ static int32_t buildkeytranslationtable(void)
     MAP(SDL_SCANCODE_LALT,		0x38);
     MAP(SDL_SCANCODE_LGUI,	0xdb);	// win l
     MAP(SDL_SCANCODE_RGUI,	0xdc);	// win r
-    MAP(SDL_SCANCODE_PRINTSCREEN,		-2);	// 0xaa + 0xb7
+//    MAP(SDL_SCANCODE_PRINTSCREEN,		-2);	// 0xaa + 0xb7
     MAP(SDL_SCANCODE_SYSREQ,	0x54);	// alt+printscr
 //    MAP(SDL_SCANCODE_PAUSE,		0xb7);	// ctrl+pause
     MAP(SDL_SCANCODE_MENU,		0xdd);	// win menu?

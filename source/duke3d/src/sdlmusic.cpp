@@ -28,7 +28,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 // This object is shared by all Build games with MIDI playback!
 
-#define _NEED_SDLMIXER	1
+#define NEED_SDL_MIXER
 
 #include "compat.h"
 
@@ -37,6 +37,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "sdlayer.h"
 #include "music.h"
+
+#include "vfs.h"
 
 #if !defined _WIN32 && !defined(GEKKO)
 //# define FORK_EXEC_MIDI 1
@@ -102,8 +104,8 @@ const char *MUSIC_ErrorString(int32_t ErrorNumber)
 int32_t MUSIC_Init(int32_t SoundCard, int32_t Address)
 {
 #ifdef __ANDROID__
-	music_initialized = 1;
-	return MUSIC_Ok;
+    music_initialized = 1;
+    return MUSIC_Ok;
 #endif
     // Use an external MIDI player if the user has specified to do so
     char *command = getenv("EDUKE32_MUSIC_CMD");
@@ -216,12 +218,12 @@ fallback:
 
     {
         static const char *s[] = { "/etc/timidity.cfg", "/etc/timidity/timidity.cfg", "/etc/timidity/freepats.cfg" };
-        FILE *fp;
+        buildvfs_FILE fp;
         int32_t i;
 
         for (i = ARRAY_SIZE(s)-1; i>=0; i--)
         {
-            fp = Bfopen(s[i], "r");
+            fp = buildvfs_fopen_read(s[i]);
             if (fp == NULL)
             {
                 if (i == 0)
@@ -235,7 +237,7 @@ fallback:
             }
             else break;
         }
-        Bfclose(fp);
+        buildvfs_fclose(fp);
     }
 
     music_initialized = 1;
@@ -359,13 +361,14 @@ int32_t MUSIC_StopSong(void)
 } // MUSIC_StopSong
 
 #if defined FORK_EXEC_MIDI
-static void playmusic()
+static int32_t playmusic()
 {
     pid_t pid = vfork();
 
     if (pid==-1)  // error
     {
         initprintf("%s: vfork: %s\n", __func__, strerror(errno));
+        return MUSIC_Error;
     }
     else if (pid==0)  // child
     {
@@ -380,6 +383,8 @@ static void playmusic()
     {
         external_midi_pid = pid;
     }
+
+    return MUSIC_Ok;
 }
 
 static void sigchld_handler(int signo)
@@ -405,15 +410,11 @@ static void sigchld_handler(int signo)
 
 // Duke3D-specific.  --ryan.
 // void MUSIC_PlayMusic(char *_filename)
-int32_t MUSIC_PlaySong(char *song, int32_t loopflag)
+int32_t MUSIC_PlaySong(char *song, int32_t songsize, int32_t loopflag)
 {
-//	initprintf("MUSIC_PlaySong");
-    // TODO: graceful failure
-    MUSIC_StopSong();
-
     if (external_midi)
     {
-        FILE *fp;
+        buildvfs_FILE fp;
 
 #if defined FORK_EXEC_MIDI
         static int32_t sigchld_handler_set = 0;
@@ -432,33 +433,47 @@ int32_t MUSIC_PlaySong(char *song, int32_t loopflag)
         }
 #endif
 
-        fp = Bfopen(external_midi_tempfn, "wb");
+        fp = buildvfs_fopen_write(external_midi_tempfn);
         if (fp)
         {
-            fwrite(song, 1, g_musicSize, fp);
-            Bfclose(fp);
+            buildvfs_fwrite(song, 1, songsize, fp);
+            buildvfs_fclose(fp);
 
 #if defined FORK_EXEC_MIDI
             external_midi_restart = loopflag;
-            playmusic();
+            int32_t retval = playmusic();
+            if (retval != MUSIC_Ok)
+                return retval;
 #else
             music_musicchunk = Mix_LoadMUS(external_midi_tempfn);
             if (!music_musicchunk)
+            {
                 initprintf("Mix_LoadMUS: %s\n", Mix_GetError());
+                return MUSIC_Error;
+            }
 #endif
         }
-        else initprintf("%s: fopen: %s\n", __func__, strerror(errno));
+        else
+        {
+            initprintf("%s: fopen: %s\n", __func__, strerror(errno));
+            return MUSIC_Error;
+        }
     }
     else
-        music_musicchunk = Mix_LoadMUS_RW(SDL_RWFromMem(song, g_musicSize)
+        music_musicchunk = Mix_LoadMUS_RW(SDL_RWFromMem(song, songsize)
 #if (SDL_MAJOR_VERSION > 1)
             , SDL_FALSE
 #endif
             );
 
-    if (music_musicchunk != NULL)
-        if (Mix_PlayMusic(music_musicchunk, (loopflag == MUSIC_LoopSong)?-1:0) == -1)
-            initprintf("Mix_PlayMusic: %s\n", Mix_GetError());
+    if (music_musicchunk == NULL)
+        return MUSIC_Error;
+
+    if (Mix_PlayMusic(music_musicchunk, (loopflag == MUSIC_LoopSong)?-1:0) == -1)
+    {
+        initprintf("Mix_PlayMusic: %s\n", Mix_GetError());
+        return MUSIC_Error;
+    }
 
     return MUSIC_Ok;
 }

@@ -5,7 +5,7 @@
 #undef SECTORTYPE
 #undef SPRITETYPE
 
-#ifdef UNTRACKED_STRUCTS
+#ifdef UNTRACKED_STRUCTS__
 
 #define StructTracker(tracker, type) type
 #define StructName(name) u ## name
@@ -71,7 +71,13 @@ typedef struct
 //32 bytes
 typedef struct
 {
-    StructTracker(Wall, int32_t) x, y;
+    union {
+        struct
+        {
+            StructTracker(Wall, int32_t) x, y;
+        };
+        vec2_t pos;
+    };
     StructTracker(Wall, int16_t) point2, nextwall, nextsector;
     StructTracker(Wall, uint16_t) cstat;
     StructTracker(Wall, int16_t) picnum, overpicnum;
@@ -129,16 +135,41 @@ enum
 enum
 {
     CSTAT_SPRITE_ALIGNMENT_FACING = 0,
-    CSTAT_SPRITE_ALIGNMENT_WALL = 1u<<4u,
-    CSTAT_SPRITE_ALIGNMENT_FLOOR = 1u<<5u,
-    CSTAT_SPRITE_ALIGNMENT_SLAB = 1u<<4u | 1u<<5u,
+    CSTAT_SPRITE_ALIGNMENT_WALL   = 1u<<4u,
+    CSTAT_SPRITE_ALIGNMENT_FLOOR  = 1u<<5u,
+    CSTAT_SPRITE_ALIGNMENT_SLAB   = 1u<<4u | 1u<<5u,
+
+    CSTAT_SPRITE_ALIGNMENT_MASK   = 1u<<4u | 1u<<5u,
+};
+
+enum
+{
+    CSTAT_WALL_BLOCK         = 1u,
+    CSTAT_WALL_BOTTOM_SWAP   = 1u<<1u,
+    CSTAT_WALL_ALIGN_BOTTOM  = 1u<<2u,
+    CSTAT_WALL_XFLIP         = 1u<<3u,
+    CSTAT_WALL_MASKED        = 1u<<4u,
+    CSTAT_WALL_1WAY          = 1u<<5u,
+    CSTAT_WALL_BLOCK_HITSCAN = 1u<<6u,
+    CSTAT_WALL_TRANSLUCENT   = 1u<<7u,
+    CSTAT_WALL_YFLIP         = 1u<<8u,
+    CSTAT_WALL_TRANS_FLIP    = 1u<<9u,
+    CSTAT_WALL_YAX_UPWALL    = 1u<<10u,
+    CSTAT_WALL_YAX_DOWNWALL  = 1u<<11u,
+    CSTAT_WALL_ROTATE_90     = 1u<<12u,
 };
 #endif
 
 //44 bytes
 typedef struct
 {
-    StructTracker(Sprite, int32_t) x, y, z;
+    union {
+        struct
+        {
+            StructTracker(Sprite, int32_t) x, y, z;
+        };
+        vec3_t pos;
+    };
     StructTracker(Sprite, uint16_t) cstat;
     StructTracker(Sprite, int16_t) picnum;
     StructTracker(Sprite, int8_t) shade;
@@ -146,7 +177,14 @@ typedef struct
     StructTracker(Sprite, uint8_t) xrepeat, yrepeat;
     StructTracker(Sprite, int8_t) xoffset, yoffset;
     StructTracker(Sprite, int16_t) sectnum, statnum;
-    StructTracker(Sprite, int16_t) ang, owner, xvel, yvel, zvel;
+    StructTracker(Sprite, int16_t) ang, owner;
+    union {
+        struct
+        {
+            StructTracker(Sprite, int16_t) xvel, yvel, zvel;
+        };
+        vec3_16_t vel;
+    };
     StructTracker(Sprite, int16_t) lotag, hitag;
     StructTracker(Sprite, int16_t) extra;
 } StructName(spritetypev7);
@@ -154,7 +192,7 @@ typedef struct
 //////////////////// END Version 7 map format ////////////////
 
 //////////////////// Lunatic new-generation map format ////////////////////
-
+#if defined NEW_MAP_FORMAT
 // 44 bytes
 typedef struct
 {
@@ -180,7 +218,13 @@ typedef struct
 // 38 bytes
 typedef struct
 {
-    StructTracker(Wall, int32_t) x, y;
+    union {
+        struct
+        {
+            StructTracker(Wall, int32_t) x, y;
+        };
+        vec2_t pos;
+    };
     StructTracker(Wall, int16_t) point2, nextwall, nextsector;
     StructTracker(Wall, int16_t) upwall, dnwall;
     StructTracker(Wall, uint16_t) cstat;
@@ -191,7 +235,7 @@ typedef struct
     StructTracker(Wall, int16_t) extra;
     StructTracker(Wall, uint8_t) blend, filler_;
 } StructName(walltypevx);
-
+#endif
 // NOTE: spritetype is currently the same for V7/8/9 and VX in-memory map formats.
 
 //////////////////// END Lunatic new-generation map format ////////////////

@@ -31,37 +31,73 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #ifndef MULTIVC_H_
 #define MULTIVC_H_
 
-#include "limits.h"
-#include "inttypes.h"
 #include "multivoc.h"
 
 #define VOC_8BIT            0x0
 #define VOC_16BIT           0x4
 
 #define T_SIXTEENBIT_STEREO 0
-#define T_MONO         2
-#define T_16BITSOURCE  4
-#define T_STEREOSOURCE 8
-#define T_LEFTQUIET    16
-#define T_RIGHTQUIET   32
+#define T_MONO         1
+#define T_16BITSOURCE  2
+#define T_STEREOSOURCE 4
 #define T_DEFAULT      T_SIXTEENBIT_STEREO
 
 #define MV_MAXPANPOSITION  127  /* formerly 31 */
 #define MV_NUMPANPOSITIONS ( MV_MAXPANPOSITION + 1 )
 #define MV_MAXTOTALVOLUME  255
-#define MV_MAXVOLUME       255  /* formerly 63 */
-#define MV_NUMVOICES       8
+#define MV_MAXVOLUME       127  /* formerly 63 */
 
 // mirrors FX_MUSIC_PRIORITY from fx_man.h
 #define MV_MUSIC_PRIORITY INT_MAX
 
 #define MIX_VOLUME(volume) ((max(0, min((volume), 255)) * (MV_MAXVOLUME + 1)) >> 8)
 
-#define MV_MIXBUFFERSIZE     256
-#define MV_NUMBEROFBUFFERS   16
-#define MV_TOTALBUFFERSIZE   ( MV_MIXBUFFERSIZE * MV_NUMBEROFBUFFERS )
+extern float MV_GlobalVolume;
+extern float MV_VolumeSmooth;
 
-//#define PI                3.1415926536
+static FORCE_INLINE float SMOOTH_VOLUME(float const volume, float const dest)
+{
+    return volume + (dest - volume) * MV_VolumeSmooth;
+}
+
+template <typename T>
+static inline conditional_t< is_signed<T>::value, make_unsigned_t<T>, make_signed_t<T> > FLIP_SIGN(T src)
+{
+    static constexpr make_unsigned_t<T> msb = ((make_unsigned_t<T>)1) << (sizeof(T) * CHAR_BIT - 1u);
+    return src ^ msb;
+}
+
+template <typename T>
+static inline enable_if_t<is_signed<T>::value, T> SCALE_SAMPLE(T src, float volume)
+{
+    return (T)Blrintf((float)src * volume);
+}
+template <typename T>
+static inline enable_if_t<is_unsigned<T>::value, T> SCALE_SAMPLE(T src, float volume)
+{
+    return FLIP_SIGN(SCALE_SAMPLE(FLIP_SIGN(src), volume));
+}
+
+struct split16_t
+{
+    explicit split16_t(uint16_t x) : v{x} {}
+
+    uint8_t l() const
+    {
+        return (v & 0x00FFu);
+    }
+    uint8_t h() const
+    {
+        return (v & 0xFF00u) >> CHAR_BIT;
+    }
+
+private:
+    uint16_t v;
+};
+
+#define MV_MIXBUFFERSIZE     256
+#define MV_NUMBEROFBUFFERS   32
+#define MV_TOTALBUFFERSIZE   ( MV_MIXBUFFERSIZE * MV_NUMBEROFBUFFERS )
 
 typedef enum
 {
@@ -75,14 +111,14 @@ typedef struct VoiceNode
     struct VoiceNode *next;
     struct VoiceNode *prev;
 
-    playbackstatus (*GetSound)(struct VoiceNode *voice);
+    playbackstatus (*GetSound)(struct VoiceNode *);
 
-    void (*mix)(uint32_t position, uint32_t rate, const char *start, uint32_t length);
+    uint32_t (*mix)(struct VoiceNode *, uint32_t);
 
     const char *sound;
 
-    const int16_t *LeftVolume;
-    const int16_t *RightVolume;
+    float LeftVolume, LeftVolumeDest;
+    float RightVolume, RightVolumeDest;
 
     void *rawdataptr;
 
@@ -93,6 +129,8 @@ typedef struct VoiceNode
     wavefmt_t wavetype;
     char bits;
     char channels;
+
+    float volume;
 
     unsigned LoopCount;
     uint32_t LoopSize;
@@ -107,7 +145,6 @@ typedef struct VoiceNode
     uint32_t SamplingRate;
     uint32_t RateScale;
     uint32_t position;
-    int32_t Playing;
     int32_t Paused;
 
     int32_t handle;
@@ -151,7 +188,6 @@ extern Pan MV_PanTable[ MV_NUMPANPOSITIONS ][ MV_MAXVOLUME + 1 ];
 extern int32_t MV_ErrorCode;
 extern int32_t MV_Installed;
 extern int32_t MV_MixRate;
-typedef char HARSH_CLIP_TABLE_8[ MV_NUMVOICES * 256 ];
 
 #define MV_SetErrorCode(status) MV_ErrorCode = (status);
 
@@ -160,7 +196,7 @@ void MV_PlayVoice(VoiceNode *voice);
 VoiceNode *MV_AllocVoice(int32_t priority);
 
 void MV_SetVoiceMixMode(VoiceNode *voice);
-void MV_SetVoiceVolume(VoiceNode *voice, int32_t vol, int32_t left, int32_t right);
+void MV_SetVoiceVolume(VoiceNode *voice, int32_t vol, int32_t left, int32_t right, float volume);
 void MV_SetVoicePitch(VoiceNode *voice, uint32_t rate, int32_t pitchoffset);
 
 int32_t MV_GetVorbisPosition(VoiceNode *voice);
@@ -178,22 +214,19 @@ void MV_ReleaseXAVoice(VoiceNode *voice);
 void MV_ReleaseXMPVoice(VoiceNode *voice);
 
 // implemented in mix.c
-void MV_Mix16BitMono(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitStereo(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitMono16(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitStereo16(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_16BitReverb( char const *src, char *dest, int16_t *volume, int32_t count );
+uint32_t MV_Mix16BitMono(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitStereo(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitMono16(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitStereo16(struct VoiceNode *voice, uint32_t length);
+void MV_16BitReverb(char const *src, char *dest, const float volume, int32_t count);
 
 // implemented in mixst.c
-void MV_Mix16BitMono8Stereo(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitStereo8Stereo(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitMono16Stereo(uint32_t position, uint32_t rate, const char *start, uint32_t length);
-void MV_Mix16BitStereo16Stereo(uint32_t position, uint32_t rate, const char *start, uint32_t length);
+uint32_t MV_Mix16BitMono8Stereo(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitStereo8Stereo(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitMono16Stereo(struct VoiceNode *voice, uint32_t length);
+uint32_t MV_Mix16BitStereo16Stereo(struct VoiceNode *voice, uint32_t length);
 
 extern char *MV_MixDestination;  // pointer to the next output sample
-extern uint32_t MV_MixPosition;  // return value of where the source pointer got to
-extern const int16_t *MV_LeftVolume;
-extern const int16_t *MV_RightVolume;
 extern int32_t MV_SampleSize;
 extern int32_t MV_RightChannelOffset;
 

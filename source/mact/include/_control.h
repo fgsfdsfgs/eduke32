@@ -36,6 +36,10 @@ Prepared for public release: 03/21/2003 - Charlie Wiederhold, 3D Realms
 
 #ifndef control_private_h_
 #define control_private_h_
+
+#include "compat.h"
+#include "keyboard.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,10 +55,10 @@ extern "C" {
 #define BUTTONUNDEFINED 0x7f
 #define KEYUNDEFINED    0x7f
 
-#define THRESHOLD        0x200
-#define MINTHRESHOLD     0x80
+#define THRESHOLD        (0x200 * 32767 / 10000)
+#define MINTHRESHOLD     (0x80 * 32767 / 10000)
 
-#define DEFAULTMOUSESENSITIVITY 7 // 0x7000+MINIMUMMOUSESENSITIVITY
+#define DEFAULTMOUSESENSITIVITY 4 // 0x7000+MINIMUMMOUSESENSITIVITY
 
 #define INSTANT_ONOFF       0
 #define TOGGLE_ONOFF        1
@@ -85,21 +89,8 @@ extern "C" {
 
 #define BUTTONSET(x, value) (CONTROL_ButtonState |= ((uint64_t)value << ((uint64_t)(x))))
 #define BUTTONCLEAR(x) (CONTROL_ButtonState &= ~((uint64_t)1 << ((uint64_t)(x))))
-
 #define BUTTONHELDSET(x, value) (CONTROL_ButtonHeldState |= (uint64_t)(value << ((uint64_t)(x))))
-
-#define LIMITCONTROL(x)                                                                                                \
-    {                                                                                                                  \
-        if ((*x) > MAXCONTROLVALUE)                                                                                    \
-        {                                                                                                              \
-            (*x) = MAXCONTROLVALUE;                                                                                    \
-        }                                                                                                              \
-        if ((*x) < -MAXCONTROLVALUE)                                                                                   \
-        {                                                                                                              \
-            (*x) = -MAXCONTROLVALUE;                                                                                   \
-        }                                                                                                              \
-    }
-#define SGN(x) (((x) > 0) ? 1 : ((x) < 0) ? -1 : 0)
+#define LIMITCONTROL(x) (*x = clamp(*x, -MAXCONTROLVALUE, MAXCONTROLVALUE))
 
 //****************************************************************************
 //
@@ -180,7 +171,8 @@ typedef struct
 typedef struct
 {
     int32_t analog;
-    int32_t digital;
+    int8_t digital;
+    int8_t digitalClearedN, digitalClearedP;
 } controlaxistype;
 
 

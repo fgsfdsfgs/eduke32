@@ -1,3 +1,11 @@
+// "Build Engine & Tools" Copyright (c) 1993-1997 Ken Silverman
+// Ken Silverman's official web site: "http://www.advsys.net/ken"
+// See the included license file "BUILDLIC.TXT" for license info.
+//
+// This file has been modified from Ken Silverman's original release
+// by Jonathon Fowler (jf@jonof.id.au)
+// by the EDuke32 team (development@voidpoint.com)
+
 #include "compat.h"
 #include "build.h"
 #include "engine_priv.h"
@@ -7,6 +15,8 @@
 #include "palette.h"
 #include "a.h"
 #include "xxhash.h"
+
+#include "vfs.h"
 
 uint8_t *basepaltable[MAXBASEPALS] = { palette };
 uint8_t basepalreset=1;
@@ -48,7 +58,6 @@ void fullscreen_tint_gl(uint8_t r, uint8_t g, uint8_t b, uint8_t f)
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_ALPHA_TEST);
-    glDisable(GL_TEXTURE_2D);
     polymost_setFogEnabled(false);
 
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -139,12 +148,12 @@ void paletteLoadFromDisk(void)
     initfastcolorlookup_gridvectors();
 
 #ifdef USE_OPENGL
-    for (size_t x = 0; x < MAXBLENDTABS; ++x)
-        glblend[x] = defaultglblend;
+    for (auto & x : glblend)
+        x = defaultglblend;
 #endif
 
-    int32_t fil;
-    if ((fil = kopen4load("palette.dat", 0)) == -1)
+    buildvfs_kfd fil;
+    if ((fil = kopen4load("palette.dat", 0)) == buildvfs_kfd_invalid)
         return;
 
 
@@ -153,8 +162,8 @@ void paletteLoadFromDisk(void)
     if (kread_and_test(fil, palette, 768))
         return kclose(fil);
 
-    for (bssize_t k = 0; k < 768; k++)
-        palette[k] <<= 2;
+    for (unsigned char & k : palette)
+        k <<= 2;
 
     initfastcolorlookup_palette(palette);
 
@@ -265,7 +274,7 @@ void paletteLoadFromDisk(void)
             if (kread_and_test(fil, &blendnum, 1))
             {
                 initprintf("Warning: failed reading additional blending table index\n");
-                Bfree(tab);
+                Xfree(tab);
                 return kclose(fil);
             }
 
@@ -275,13 +284,13 @@ void paletteLoadFromDisk(void)
             if (kread_and_test(fil, tab, 256*256))
             {
                 initprintf("Warning: failed reading additional blending table\n");
-                Bfree(tab);
+                Xfree(tab);
                 return kclose(fil);
             }
 
             paletteSetBlendTable(blendnum, tab);
         }
-        Bfree(tab);
+        Xfree(tab);
 
         // Read log2 of count of alpha blending tables.
         uint8_t lognumalphatabs;
@@ -366,23 +375,19 @@ void palettePostLoadTables(void)
 
 void paletteFixTranslucencyMask(void)
 {
-    for (bssize_t i=0; i<MAXPALOOKUPS; i++)
+    for (auto thispalookup : palookup)
     {
-        char * const thispalookup = palookup[i];
         if (thispalookup == NULL)
             continue;
 
         for (bssize_t j=0; j<numshades; j++)
-        {
             thispalookup[(j<<8) + 255] = 255;
-        }
     }
 
     // fix up translucency table so that transluc(255,x)
     // and transluc(x,255) is black instead of purple.
-    for (bssize_t i=0; i<MAXBLENDTABS; i++)
+    for (auto transluc : blendtable)
     {
-        char * const transluc = blendtable[i];
         if (transluc == NULL)
             continue;
 
@@ -403,7 +408,7 @@ void paletteFixTranslucencyMask(void)
 //  - on success, 0
 //  - on error, -1 (didn't read enough data)
 //  - -2: error, we already wrote an error message ourselves
-int32_t paletteLoadLookupTable(int32_t fp)
+int32_t paletteLoadLookupTable(buildvfs_kfd fp)
 {
     uint8_t numlookups;
     char remapbuf[256];
@@ -655,8 +660,11 @@ void paletteSetColorTable(int32_t id, uint8_t const * const table)
 
     Bmemcpy(basepaltable[id], table, 768);
 
-#if defined(USE_OPENGL)
-    uploadbasepalette(id);
+#ifdef USE_OPENGL
+    if (videoGetRenderMode() >= REND_POLYMOST)
+    {
+        uploadbasepalette(id);
+    }
 #endif
 }
 
@@ -817,7 +825,9 @@ void videoFadePalette(uint8_t r, uint8_t g, uint8_t b, uint8_t offset)
     uint32_t newpalettesum = XXH32((uint8_t *) curpalettefaded, sizeof(curpalettefaded), sizeof(curpalettefaded));
 
     if (newpalettesum != lastpalettesum || newpalettesum != g_lastpalettesum)
+    {
         videoUpdatePalette(0, 256);
+    }
 
     g_lastpalettesum = lastpalettesum = newpalettesum;
 }

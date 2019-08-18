@@ -49,8 +49,7 @@ extern "C" {
 #define MAXJOYAXES 9
 #define MAXJOYDIGITAL (MAXJOYAXES*2)
 
-// default mouse sensitivity and scale
-#define DEFAULTMOUSESENSITIVITY             7
+// default mouse scale
 #define DEFAULTMOUSEANALOGUESCALE           65536
 
 // default joystick settings
@@ -61,7 +60,7 @@ extern "C" {
 #define DEFAULTJOYSTICKANALOGUESATURATE     9500
 #else
 #define DEFAULTJOYSTICKANALOGUESCALE        65536
-#define DEFAULTJOYSTICKANALOGUEDEAD         1000
+#define DEFAULTJOYSTICKANALOGUEDEAD         2000
 #define DEFAULTJOYSTICKANALOGUESATURATE     9500
 #endif
 

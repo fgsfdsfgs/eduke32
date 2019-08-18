@@ -18,11 +18,7 @@ extern "C"
 }
 #endif // _WIN32
 
-vec2_t const g_defaultVideoModes[]
-= { { 2560, 1440 }, { 2560, 1200 }, { 2560, 1080 }, { 1920, 1440 }, { 1920, 1200 }, { 1920, 1080 }, { 1680, 1050 },
-    { 1600, 1200 }, { 1600, 900 },  { 1366, 768 },  { 1280, 1024 }, { 1280, 960 },  { 1280, 720 },  { 1152, 864 },
-    { 1024, 768 },  { 1024, 600 },  { 800, 600 },   { 640, 480 },   { 640, 400 },   { 512, 384 },   { 480, 360 },
-    { 400, 300 },   { 320, 240 },   { 320, 200 },   { 0, 0 } };
+int32_t swapcomplete=0;
 
 // input
 char    inputdevices = 0;
@@ -39,14 +35,6 @@ char    g_keyNameTable[NUMKEYS][24];
 void (*keypresscallback)(int32_t, int32_t);
 
 void keySetCallback(void (*callback)(int32_t, int32_t)) { keypresscallback = callback; }
-
-char const g_keyAsciiTable[128] = {
-    0  ,   0,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 0,  0,   'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
-    '[', ']', 0,   0,   'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', 39, '`', 0,   92,  'z', 'x', 'c', 'v', 'b', 'n', 'm', ',',
-    '.', '/', 0,   '*', 0,   32,  0,   0,   0,   0,   0,   0,   0,   0,   0,  0,   0,   0,   0,   '7', '8', '9', '-', '4', '5', '6',
-    '+', '1', '2', '3', '0', '.', 0,   0,   0,   0,   0,   0,   0,   0,   0,  0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-    0  ,   0,   0,   0,   0,   0, 0,   0,   0,   0,   0,   0,   0,   0,   0,  0,   0,   0,   0,   0,   0,   0,   0,   0,
-};
 
 int32_t keyGetState(int32_t key) { return keystatus[g_keyRemapTable[key]]; }
 
@@ -128,15 +116,17 @@ int32_t mouseReadAbs(vec2_t * const pResult, vec2_t const * const pInput)
 
     int32_t const xwidth = max(scale(240<<16, xdim, ydim), 320<<16);
 
-    pResult->x = scale(pInput->x, xwidth, xdim) - ((xwidth>>1) - (320<<15));
-    pResult->y = scale(pInput->y, 200<<16, ydim);
+    pResult->x = scale(pInput->x, xwidth, xres) - ((xwidth>>1) - (320<<15));
+    pResult->y = scale(pInput->y, 200<<16, yres);
+
+    pResult->y = divscale16(pResult->y - (200<<15), rotatesprite_yxaspect) + (200<<15) - rotatesprite_y_offset;
 
     return 1;
 }
 
-void mouseReadButtons(int32_t *pResult)
+int32_t mouseReadButtons(void)
 {
-    *pResult = (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE)) ? 0 : g_mouseBits;
+    return (!g_mouseEnabled || !appactive || !g_mouseInsideWindow || (osd && osd->flags & OSD_CAPTURE)) ? 0 : g_mouseBits;
 }
 
 controllerinput_t joystick;
@@ -213,7 +203,7 @@ void calc_ylookup(int32_t bpl, int32_t lastyidx)
 
     if (lastyidx > ylookupsiz)
     {
-        Baligned_free(ylookup);
+        Xaligned_free(ylookup);
 
         ylookup = (intptr_t *)Xaligned_alloc(16, lastyidx * sizeof(intptr_t));
         ylookupsiz = lastyidx;
@@ -278,13 +268,15 @@ struct glinfo_t glinfo =
     0,          // Debug Output
     0,          // Buffer storage
     0,          // Sync
+    0,          // Depth Clamp
+    0,          // Clip Control
     0,          // GL info dumped
 };
 
 // Used to register the game's / editor's osdcmd_vidmode() functions here.
-int32_t (*baselayer_osdcmd_vidmode_func)(osdfuncparm_t const * const parm);
+int32_t (*baselayer_osdcmd_vidmode_func)(osdcmdptr_t parm);
 
-static int32_t osdfunc_setrendermode(osdfuncparm_t const * const parm)
+static int osdfunc_setrendermode(osdcmdptr_t parm)
 {
     if (parm->numparms != 1)
         return OSDCMD_SHOWHELP;
@@ -321,12 +313,16 @@ static int32_t osdfunc_setrendermode(osdfuncparm_t const * const parm)
 
     videoSetRenderMode(m);
 
-    char const *renderer;
+    char const *renderer = "other";
 
     switch (videoGetRenderMode())
     {
     case REND_CLASSIC:
-        renderer = "classic software";
+#ifdef NOASM
+        renderer = "classic software (C)";
+#else
+        renderer = "classic software (ASM)";
+#endif
         break;
     case REND_POLYMOST:
         renderer = "polygonal OpenGL";
@@ -336,8 +332,6 @@ static int32_t osdfunc_setrendermode(osdfuncparm_t const * const parm)
         renderer = "great justice (Polymer)";
         break;
 #endif
-    default:
-        EDUKE32_UNREACHABLE_SECTION(break);
     }
 
     OSD_Printf("Rendering method changed to %s\n", renderer);
@@ -346,7 +340,7 @@ static int32_t osdfunc_setrendermode(osdfuncparm_t const * const parm)
 }
 
 #ifdef DEBUGGINGAIDS
-static int32_t osdcmd_hicsetpalettetint(osdfuncparm_t const * const parm)
+static int osdcmd_hicsetpalettetint(osdcmdptr_t parm)
 {
     int32_t parms[8];
 
@@ -365,7 +359,7 @@ static int32_t osdcmd_hicsetpalettetint(osdfuncparm_t const * const parm)
 }
 #endif
 
-int32_t osdcmd_glinfo(osdfuncparm_t const * const UNUSED(parm))
+int osdcmd_glinfo(osdcmdptr_t UNUSED(parm))
 {
     UNREFERENCED_CONST_PARAMETER(parm);
 
@@ -417,7 +411,7 @@ int32_t osdcmd_glinfo(osdfuncparm_t const * const UNUSED(parm))
 }
 #endif
 
-static int32_t osdcmd_cvar_set_baselayer(osdfuncparm_t const * const parm)
+static int osdcmd_cvar_set_baselayer(osdcmdptr_t parm)
 {
     int32_t r = osdcmd_cvar_set(parm);
 
@@ -448,6 +442,7 @@ int32_t baselayer_init(void)
         { "r_usenewaspect","enable/disable new screen aspect ratio determination code",(void *) &r_usenewaspect, CVAR_BOOL, 0, 1 },
         { "r_screenaspect","if using r_usenewaspect and in fullscreen, screen aspect ratio in the form XXYY, e.g. 1609 for 16:9",
           (void *) &r_screenxy, SCREENASPECT_CVAR_TYPE, 0, 9999 },
+        { "r_fpgrouscan","use floating-point numbers for slope rendering",(void *) &r_fpgrouscan, CVAR_BOOL, 0, 1 },
         { "r_novoxmips","turn off/on the use of mipmaps when rendering 8-bit voxels",(void *) &novoxmips, CVAR_BOOL, 0, 1 },
         { "r_voxels","enable/disable automatic sprite->voxel rendering",(void *) &usevoxels, CVAR_BOOL, 0, 1 },
 #ifdef YAX_ENABLE
@@ -466,8 +461,8 @@ int32_t baselayer_init(void)
 #endif
     };
 
-    for (native_t i=0; i<ARRAY_SSIZE(cvars_engine); i++)
-        OSD_RegisterCvar(&cvars_engine[i], (cvars_engine[i].flags & CVAR_FUNCPTR) ? osdcmd_cvar_set_baselayer : osdcmd_cvar_set);
+    for (auto & i : cvars_engine)
+        OSD_RegisterCvar(&i, (i.flags & CVAR_FUNCPTR) ? osdcmd_cvar_set_baselayer : osdcmd_cvar_set);
 
 #ifdef USE_OPENGL
     OSD_RegisterFunction("setrendermode","setrendermode <number>: sets the engine's rendering mode.\n"

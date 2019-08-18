@@ -22,11 +22,13 @@
  * libSDL output driver for MultiVoc
  */
 
-#define _NEED_SDLMIXER
-#include "compat.h"
-#include "sdl_inc.h"
+#define NEED_SDL_MIXER
 #include "driver_sdl.h"
+
+#include "compat.h"
 #include "multivoc.h"
+#include "mutex.h"
+#include "sdl_inc.h"
 
 #ifdef __ANDROID__
 #include "duke3d.h"
@@ -57,12 +59,12 @@ static void ( *MixCallBack )( void ) = 0;
 static Mix_Chunk *DummyChunk = NULL;
 static uint8_t *DummyBuffer = NULL;
 static int32_t InterruptsDisabled = 0;
-static SDL_mutex *EffectFence;
+static mutex_t EffectFence;
 
 static void fillData(int chan, void *ptr, int remaining, void *udata)
 {
-	int32_t len;
-	char *sptr;
+    int32_t len;
+    char *sptr;
 
     UNREFERENCED_PARAMETER(chan);
     UNREFERENCED_PARAMETER(udata);
@@ -70,36 +72,36 @@ static void fillData(int chan, void *ptr, int remaining, void *udata)
     if (!MixBuffer || !MixCallBack)
       return;
 
-    SDL_LockMutex(EffectFence);
+    mutex_lock(&EffectFence);
 
-	while (remaining > 0) {
-		if (MixBufferUsed == MixBufferSize) {
-			MixCallBack();
+    while (remaining > 0) {
+        if (MixBufferUsed == MixBufferSize) {
+            MixCallBack();
 
-			MixBufferUsed = 0;
-			MixBufferCurrent++;
-			if (MixBufferCurrent >= MixBufferCount) {
-				MixBufferCurrent -= MixBufferCount;
-			}
-		}
+            MixBufferUsed = 0;
+            MixBufferCurrent++;
+            if (MixBufferCurrent >= MixBufferCount) {
+                MixBufferCurrent -= MixBufferCount;
+            }
+        }
 
-		while (remaining > 0 && MixBufferUsed < MixBufferSize) {
-			sptr = MixBuffer + (MixBufferCurrent * MixBufferSize) + MixBufferUsed;
+        while (remaining > 0 && MixBufferUsed < MixBufferSize) {
+            sptr = MixBuffer + (MixBufferCurrent * MixBufferSize) + MixBufferUsed;
 
-			len = MixBufferSize - MixBufferUsed;
-			if (remaining < len) {
-				len = remaining;
-			}
+            len = MixBufferSize - MixBufferUsed;
+            if (remaining < len) {
+                len = remaining;
+            }
 
-			memcpy(ptr, sptr, len);
+            memcpy(ptr, sptr, len);
 
-			ptr = (void *)((uintptr_t)(ptr) + len);
-			MixBufferUsed += len;
-			remaining -= len;
-		}
-	}
+            ptr = (void *)((uintptr_t)(ptr) + len);
+            MixBufferUsed += len;
+            remaining -= len;
+        }
+    }
 
-    SDL_UnlockMutex(EffectFence);
+    mutex_unlock(&EffectFence);
 }
 
 
@@ -203,7 +205,7 @@ int32_t SDLDrv_PCM_Init(int32_t *mixrate, int32_t *numchannels, void * initdata)
 
     //Mix_SetPostMix(fillData, NULL);
 
-    EffectFence = SDL_CreateMutex();
+    mutex_init(&EffectFence);
 
     // channel 0 and 1 are actual sounds
     // dummy channel 2 runs our fillData() callback as an effect
@@ -236,8 +238,6 @@ void SDLDrv_PCM_Shutdown(void)
 
     Mix_CloseAudio();
 
-    SDL_DestroyMutex(EffectFence);
-
     if (StartedSDL > 0) {
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
     } else if (StartedSDL == 0) {
@@ -249,43 +249,43 @@ void SDLDrv_PCM_Shutdown(void)
 }
 
 int32_t SDLDrv_PCM_BeginPlayback(char *BufferStart, int32_t BufferSize,
-						int32_t NumDivisions, void ( *CallBackFunc )( void ) )
+                        int32_t NumDivisions, void ( *CallBackFunc )( void ) )
 {
-	if (!Initialised) {
-		ErrorCode = SDLErr_Uninitialised;
-		return SDLErr_Error;
-	}
+    if (!Initialised) {
+        ErrorCode = SDLErr_Uninitialised;
+        return SDLErr_Error;
+    }
 
-	if (Playing) {
-		SDLDrv_PCM_StopPlayback();
-	}
+    if (Playing) {
+        SDLDrv_PCM_StopPlayback();
+    }
 
-	MixBuffer = BufferStart;
-	MixBufferSize = BufferSize;
-	MixBufferCount = NumDivisions;
-	MixBufferCurrent = 0;
-	MixBufferUsed = 0;
-	MixCallBack = CallBackFunc;
+    MixBuffer = BufferStart;
+    MixBufferSize = BufferSize;
+    MixBufferCount = NumDivisions;
+    MixBufferCurrent = 0;
+    MixBufferUsed = 0;
+    MixCallBack = CallBackFunc;
 
-	// prime the buffer
-	MixCallBack();
+    // prime the buffer
+    MixCallBack();
 
-	Mix_Resume(-1);
+    Mix_Resume(-1);
 
     Playing = 1;
 
-	return SDLErr_Ok;
+    return SDLErr_Ok;
 }
 
 void SDLDrv_PCM_StopPlayback(void)
 {
-	if (!Initialised || !Playing) {
-		return;
-	}
+    if (!Initialised || !Playing) {
+        return;
+    }
 
     Mix_Pause(-1);
 
-	Playing = 0;
+    Playing = 0;
 }
 
 void SDLDrv_PCM_Lock(void)
@@ -293,7 +293,7 @@ void SDLDrv_PCM_Lock(void)
     if (InterruptsDisabled++)
         return;
 
-    SDL_LockMutex(EffectFence);
+    mutex_lock(&EffectFence);
 }
 
 void SDLDrv_PCM_Unlock(void)
@@ -301,5 +301,5 @@ void SDLDrv_PCM_Unlock(void)
     if (--InterruptsDisabled)
         return;
 
-    SDL_UnlockMutex(EffectFence);
+    mutex_unlock(&EffectFence);
 }

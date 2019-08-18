@@ -18,8 +18,6 @@
 
 int32_t backgroundidle = 1;
 
-int64_t win_timerfreq = 0;
-
 char silentvideomodeswitch = 0;
 
 static char taskswitching = 1;
@@ -97,11 +95,11 @@ static void win_printversion(void)
             break;
     }
 
-    char *str = (char *)Bcalloc(1, 256);
+    char *str = (char *)Xcalloc(1, 256);
     int l;
 
     if (pwinever)
-        l = Bsprintf(str, "Wine %s identifying as Windows %s", (char *)pwinever(), ver);
+        l = Bsprintf(str, "Wine %s, identifying as Windows %s", (char *)pwinever(), ver);
     else
         l = Bsprintf(str, "Windows %s", ver);
 
@@ -113,7 +111,7 @@ static void win_printversion(void)
     }
 
     initprintf("Running on %s (build %lu.%lu.%lu)\n", str, osv.dwMajorVersion, osv.dwMinorVersion, osv.dwBuildNumber);
-    Bfree(str);
+    Xfree(str);
 }
 
 //
@@ -147,38 +145,6 @@ int32_t win_checkinstance(void)
     return (WaitForSingleObject(instanceflag,0) == WAIT_TIMEOUT);
 }
 
-//
-// high-resolution timers for profiling
-//
-#if defined(RENDERTYPEWIN) || SDL_MAJOR_VERSION==1
-int32_t win_inittimer(void)
-{
-    int64_t t;
-
-    if (win_timerfreq) return 0;	// already installed
-
-    // OpenWatcom seems to want us to query the value into a local variable
-    // instead of the global 'win_timerfreq' or else it gets pissed with an
-    // access violation
-    if (!QueryPerformanceFrequency((LARGE_INTEGER *)&t))
-    {
-        ShowErrorBox("Failed fetching timer frequency");
-        return -1;
-    }
-    win_timerfreq = t;
-
-    return 0;
-}
-
-uint64_t win_getu64ticks(void)
-{
-    uint64_t i;
-    if (win_timerfreq == 0) return 0;
-    QueryPerformanceCounter((LARGE_INTEGER *)&i);
-    return i;
-}
-#endif
-
 
 static void ToggleDesktopComposition(BOOL compEnable)
 {
@@ -186,7 +152,7 @@ static void ToggleDesktopComposition(BOOL compEnable)
     static HRESULT(WINAPI *aDwmEnableComposition)(UINT);
 
     if (!hDWMApiDLL && (hDWMApiDLL = LoadLibrary("DWMAPI.DLL")))
-        aDwmEnableComposition = (HRESULT(WINAPI *)(UINT))GetProcAddress(hDWMApiDLL, "DwmEnableComposition");
+        aDwmEnableComposition = (HRESULT(WINAPI *)(UINT))(void (*)(void))GetProcAddress(hDWMApiDLL, "DwmEnableComposition");
 
     if (aDwmEnableComposition)
     {
@@ -207,8 +173,8 @@ void win_open(void)
     HMODULE ebacktrace = LoadLibraryA(EBACKTRACEDLL);
     if (ebacktrace)
     {
-        dllSetString SetTechnicalName = (dllSetString) GetProcAddress(ebacktrace, "SetTechnicalName");
-        dllSetString SetProperName = (dllSetString) GetProcAddress(ebacktrace, "SetProperName");
+        dllSetString SetTechnicalName = (dllSetString) (void (*)(void))GetProcAddress(ebacktrace, "SetTechnicalName");
+        dllSetString SetProperName = (dllSetString) (void (*)(void))GetProcAddress(ebacktrace, "SetProperName");
 
         if (SetTechnicalName)
             SetTechnicalName(AppTechnicalName);
@@ -336,11 +302,11 @@ int32_t addsearchpath_ProgramFiles(const char *p)
     {
         if (ProgramFiles[i])
         {
-            char *buffer = (char*)Bmalloc((strlen(ProgramFiles[i])+1+strlen(p)+1)*sizeof(char));
+            char *buffer = (char*)Xmalloc((strlen(ProgramFiles[i])+1+strlen(p)+1)*sizeof(char));
             Bsprintf(buffer,"%s/%s",ProgramFiles[i],p);
             if (addsearchpath(buffer) == 0) // if any work, return success
                 returncode = 0;
-            Bfree(buffer);
+            Xfree(buffer);
         }
     }
 
@@ -351,7 +317,7 @@ int32_t win_buildargs(char **argvbuf)
 {
     int32_t buildargc = 0;
 
-    *argvbuf = Bstrdup(GetCommandLine());
+    *argvbuf = Xstrdup(GetCommandLine());
 
     if (*argvbuf)
     {

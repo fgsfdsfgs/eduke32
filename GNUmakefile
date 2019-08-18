@@ -89,6 +89,43 @@ lpeg_inc := $(lpeg_root)/include
 lpeg_obj := $(obj)/$(lpeg)
 
 
+#### PhysicsFS
+
+physfs := physfs
+
+physfs_objs := \
+    physfs.c \
+    physfs_archiver_7z.c \
+    physfs_archiver_dir.c \
+    physfs_archiver_grp.c \
+    physfs_archiver_hog.c \
+    physfs_archiver_iso9660.c \
+    physfs_archiver_mvl.c \
+    physfs_archiver_qpak.c \
+    physfs_archiver_slb.c \
+    physfs_archiver_unpacked.c \
+    physfs_archiver_vdf.c \
+    physfs_archiver_wad.c \
+    physfs_archiver_zip.c \
+    physfs_byteorder.c \
+    physfs_unicode.c \
+
+ifeq ($(PLATFORM),APPLE)
+    physfs_objs += physfs_platform_apple.m
+else ifeq ($(PLATFORM),WINDOWS)
+    physfs_objs += physfs_platform_windows.c
+else
+    physfs_objs += physfs_platform_unix.c
+endif
+
+physfs_root := $(source)/$(physfs)
+physfs_src := $(physfs_root)/src
+physfs_inc := $(physfs_root)/include
+physfs_obj := $(obj)/$(physfs)
+
+physfs_cflags :=
+
+
 #### ENet
 
 enet := enet
@@ -129,13 +166,7 @@ glad_src := $(glad_root)/src
 glad_inc := $(glad_root)/include
 glad_obj := $(obj)/$(glad)
 
-glad__no_cast_qual := -Wno-cast-qual
-ifeq (4,$(GCC_MAJOR))
-    ifneq (,$(filter 0 1 2 3 4,$(GCC_MINOR)))
-        glad__no_cast_qual :=
-    endif
-endif
-glad_cflags := $(glad__no_cast_qual)
+glad_cflags :=
 
 ifeq ($(RENDERTYPE),WIN)
     glad_objs += glad_wgl.c
@@ -167,10 +198,16 @@ engine_cflags := -I$(engine_src)
 
 engine_deps :=
 
+ifneq (0,$(USE_PHYSFS))
+    engine_deps += physfs
+endif
+
 engine_objs := \
     rev.cpp \
     baselayer.cpp \
+    vfs.cpp \
     cache1d.cpp \
+    klzw.cpp \
     common.cpp \
     compat.cpp \
     crc32.cpp \
@@ -181,6 +218,8 @@ engine_objs := \
     2d.cpp \
     hash.cpp \
     palette.cpp \
+    polymost1Frag.glsl \
+    polymost1Vert.glsl \
     polymost.cpp \
     texcache.cpp \
     dxtfilter.cpp \
@@ -192,8 +231,10 @@ engine_objs := \
     osd.cpp \
     pragmas.cpp \
     scriptfile.cpp \
+    softsurface.cpp \
     mmulti_null.cpp \
     mutex.cpp \
+    timer.cpp \
     xxhash.c \
     md4.cpp \
     colmatch.cpp \
@@ -203,8 +244,8 @@ engine_objs := \
     miniz.c \
     miniz_tinfl.c \
     miniz_tdef.c \
-    fix16.c \
-    fix16_str.c \
+    fix16.cpp \
+    fix16_str.cpp \
 
 engine_editor_objs := \
     build.cpp \
@@ -216,8 +257,10 @@ engine_tools_objs := \
     pragmas.cpp \
     kplib.cpp \
     cache1d.cpp \
+    klzw.cpp \
     crc32.cpp \
     colmatch.cpp \
+    lz4.cpp \
 
 ifeq (0,$(NOASM))
   engine_objs += a.nasm
@@ -228,7 +271,7 @@ else
   endif
 endif
 ifeq (1,$(USE_OPENGL))
-    engine_objs += voxmodel.cpp mdsprite.cpp
+    engine_objs += glsurface.cpp voxmodel.cpp mdsprite.cpp tilepacker.cpp
     engine_deps += glad
     ifeq (1,$(POLYMER))
         engine_objs += glbuild.cpp polymer.cpp
@@ -260,8 +303,7 @@ ifeq ($(PLATFORM),WII)
     LINKERFLAGS += -Wl,-wrap,c_default_exceptionhandler
 endif
 ifeq ($(PLATFORM),SWITCH)
-    LIBS += -lvorbisfile -lvorbis -logg -lmpg123 -lmodplug -lm -lz
-    #-lFLAC
+    LIBS += -lvorbisfile -lvorbis -logg -lmpg123 -lmodplug -lFLAC -lopus -lopusfile -lm -lz
 endif
 ifeq ($(RENDERTYPE),SDL)
     engine_objs += sdlayer.cpp
@@ -292,7 +334,6 @@ mact_inc := $(mact_root)/include
 mact_obj := $(obj)/$(mact)
 
 mact_objs := \
-    file_lib.cpp \
     control.cpp \
     keyboard.cpp \
     joystick.cpp \
@@ -505,7 +546,7 @@ duke3d_game_objs := \
     input.cpp \
     menus.cpp \
     namesdyn.cpp \
-    net.cpp \
+    network.cpp \
     savegame.cpp \
     rts.cpp \
     osdfuncs.cpp \
@@ -681,10 +722,10 @@ sw_game_deps := duke3d_common_midi audiolib mact
 sw_editor_deps := audiolib
 
 sw_game := voidsw
-sw_editor := voidsw-editor
+sw_editor := wangulator
 
 sw_game_proper := VoidSW
-sw_editor_proper := VoidSW Editor
+sw_editor_proper := Wangulator
 
 sw_game_objs := \
     actor.cpp \
@@ -723,7 +764,7 @@ sw_game_objs := \
     menus.cpp \
     miscactr.cpp \
     morph.cpp \
-    net.cpp \
+    network.cpp \
     ninja.cpp \
     panel.cpp \
     player.cpp \
@@ -791,7 +832,10 @@ endif
 
 #### Final setup
 
-COMPILERFLAGS += -I$(engine_inc) -I$(mact_inc) -I$(audiolib_inc) -I$(enet_inc) -I$(glad_inc)
+COMPILERFLAGS += -I$(engine_inc) -I$(mact_inc) -I$(audiolib_inc) -I$(enet_inc) -I$(glad_inc) -MP -MMD
+ifneq (0,$(USE_PHYSFS))
+    COMPILERFLAGS += -I$(physfs_inc) -DUSE_PHYSFS
+endif
 
 
 ##### Recipes
@@ -809,6 +853,10 @@ libraries := \
     libxmplite \
     lpeg \
     glad \
+
+ifneq (0,$(USE_PHYSFS))
+    libraries += physfs
+endif
 
 components := \
     $(games) \
@@ -881,7 +929,7 @@ ifeq ($$(PLATFORM),DARWIN)
 	cp -f "$$($1_$2)$$(EXESUFFIX)" "$$($1_$2_proper).app/Contents/MacOS/"
 endif
 ifeq ($$(PLATFORM),SWITCH)
-	nacptool --create "Duke Nukem 3D" "Cpasjuste" "1.0" $$($1_$2).nacp
+	nacptool --create "EDuke32" "EDuke32 Team, Cpasjuste, fgsfds" "1.0.$(VC_REV)" $$($1_$2).nacp
 	elf2nro $$@ $$($1_$2).nro --icon=platform/Switch/icon.jpg --nacp=$$($1_$2).nacp
 endif
 
@@ -890,21 +938,15 @@ endef
 $(foreach i,$(games),$(foreach j,$(roles),$(eval $(call BUILDRULE,$i,$j))))
 
 
-include $(lpeg_root)/Dependencies.mak
-include $(engine_root)/Dependencies.mak
-include $(duke3d_root)/Dependencies.mak
-include $(sw_root)/Dependencies.mak
-
-
 #### Rules
 
 $(ebacktrace_dll): platform/Windows/src/backtrace.c
 	$(COMPILE_STATUS)
 	$(RECIPE_IF) $(CC) $(CONLYFLAGS) -O2 -ggdb -shared -Wall -Wextra -static-libgcc -I$(engine_inc) -o $@ $^ -lbfd -liberty -limagehlp $(RECIPE_RESULT_COMPILE)
 
-libcache1d$(DLLSUFFIX): $(engine_src)/cache1d.cpp
+libklzw$(DLLSUFFIX): $(engine_src)/klzw.cpp
 	$(COMPILE_STATUS)
-	$(RECIPE_IF) $(COMPILER_C) -DCACHE1D_COMPRESS_ONLY -shared -fPIC $< -o $@ $(RECIPE_RESULT_COMPILE)
+	$(RECIPE_IF) $(COMPILER_C) -shared -fPIC $< -o $@ $(RECIPE_RESULT_COMPILE)
 
 # to debug the tools link phase, make a copy of this rule explicitly replacing % with the name of a tool, such as kextract
 %$(EXESUFFIX): $(tools_obj)/%.$o $(foreach i,tools $(tools_deps),$(call expandobjs,$i))
@@ -944,6 +986,8 @@ $(duke3d_obj)/lunatic_%.def: $(lunatic_src)/%.lds | $(duke3d_obj)
 
 define OBJECTRULES
 
+include $(wildcard $($1_obj)/*.d)
+
 $$($1_obj)/%.$$o: $$($1_src)/%.nasm | $$($1_obj)
 	$$(COMPILE_STATUS)
 	$$(RECIPE_IF) $$(AS) $$(ASFLAGS) $$< -o $$@ $$(RECIPE_RESULT_COMPILE)
@@ -968,9 +1012,18 @@ $$($1_obj)/%.$$o: $$($1_src)/%.mm | $$($1_obj)
 	$$(COMPILE_STATUS)
 	$$(RECIPE_IF) $$(COMPILER_OBJCXX) $$($1_cflags) -c $$< -o $$@ $$(RECIPE_RESULT_COMPILE)
 
-$$($1_obj)/%.$$o: $$($1_obj)/%.c
+$$($1_obj)/%.$$o: $$($1_obj)/%.c | $$($1_obj)
 	$$(COMPILE_STATUS)
 	$$(RECIPE_IF) $$(COMPILER_C) $$($1_cflags) -c $$< -o $$@ $$(RECIPE_RESULT_COMPILE)
+
+$$($1_obj)/%.$$o: $$($1_src)/%.glsl | $$($1_obj)
+	@echo Creating $$($1_obj)/$$(<F).cpp from $$<
+	@$$(call RAW_ECHO,extern char const *$$(basename $$(<F));) > $$($1_obj)/$$(<F).cpp
+	@$$(call RAW_ECHO,char const *$$(basename $$(<F)) = R"shader$$(paren_open)) >> $$($1_obj)/$$(<F).cpp
+	@$$(call CAT,$$<) >> $$($1_obj)/$$(<F).cpp
+	@$$(call RAW_ECHO,$$(paren_close)shader";) >> $$($1_obj)/$$(<F).cpp
+	$$(COMPILE_STATUS)
+	$$(RECIPE_IF) $$(COMPILER_CXX) $$($1_cflags) -c $$($1_obj)/$$(<F).cpp -o $$@ $$(RECIPE_RESULT_COMPILE)
 
 ## Cosmetic stuff
 

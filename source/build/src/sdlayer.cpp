@@ -1,47 +1,48 @@
 // SDL interface layer for the Build Engine
 // Use SDL 1.2 or 2.0 from http://www.libsdl.org
 
-#include "compat.h"
 #include <signal.h>
-#include "sdl_inc.h"
-#include "renderlayer.h"
-#include "cache1d.h"
-//#include "pragmas.h"
+
 #include "a.h"
 #include "build.h"
-#include "osd.h"
+#include "cache1d.h"
+#include "compat.h"
 #include "engine_priv.h"
+#include "osd.h"
 #include "palette.h"
+#include "renderlayer.h"
+#include "sdl_inc.h"
+#include "softsurface.h"
 
 #ifdef USE_OPENGL
 # include "glad/glad.h"
 # include "glbuild.h"
+# include "glsurface.h"
 #endif
 
-#if defined _WIN32
-# include "winbits.h"
-#endif
-#if defined __APPLE__
-# include "osxbits.h"
-# include <mach/mach.h>
-# include <mach/mach_time.h>
-#endif
 #if defined HAVE_GTK2
 # include "gtkbits.h"
 #endif
+
 #ifdef __ANDROID__
 # include <android/log.h>
-#endif
-#if defined GEKKO
+#elif defined __APPLE__
+# include "osxbits.h"
+# include <mach/mach.h>
+# include <mach/mach_time.h>
+#elif defined GEKKO
 # include "wiibits.h"
 # include <ogc/lwp.h>
 # include <ogc/lwp_watchdog.h>
-# define SDL_DISABLE_8BIT_BUFFER
+#elif defined _WIN32
+# include "winbits.h"
 #endif
 
 #if defined __SWITCH__
 #include <switch.h>
 #endif
+
+#include "vfs.h"
 
 #if SDL_MAJOR_VERSION != 1
 static SDL_version linked;
@@ -72,18 +73,10 @@ char quitevent=0, appactive=1, novideo=0;
 
 // video
 static SDL_Surface *sdl_surface/*=NULL*/;
-#if !defined SDL_DISABLE_8BIT_BUFFER
-static SDL_Surface *sdl_buffersurface=NULL;
-#else
-# define sdl_buffersurface sdl_surface
-#endif
 
 #if SDL_MAJOR_VERSION==2
-static SDL_Palette *sdl_palptr=NULL;
 static SDL_Window *sdl_window=NULL;
 static SDL_GLContext sdl_context=NULL;
-static SDL_Texture *sdl_texture=NULL;
-static SDL_Renderer *sdl_renderer=NULL;
 #endif
 
 int32_t xres=-1, yres=-1, bpp=0, fullscreen=0, bytesperline;
@@ -102,8 +95,9 @@ char nogl=0;
 #endif
 static int32_t vsync_renderlayer;
 int32_t maxrefreshfreq=0;
-static uint32_t currentVBlankInterval=0;
-
+#if SDL_MAJOR_VERSION!=1
+static double currentVBlankInterval;
+#endif
 // last gamma, contrast, brightness
 static float lastvidgcb[3];
 
@@ -119,7 +113,7 @@ static SDL_Surface *loadappicon(void);
 static mutex_t m_initprintf;
 
 // Joystick dead and saturation zones
-uint16_t *joydead, *joysatur;
+uint16_t joydead[9], joysatur[9];
 
 #ifdef _WIN32
 # if SDL_MAJOR_VERSION != 1
@@ -429,8 +423,8 @@ int main(int argc, char *argv[])
 #endif
 
 #if defined __SWITCH__
-	//consoleDebugInit(debugDevice_SVC);
-    //stdout = stderr;
+    socketInitializeDefault();
+    int sock = nxlinkStdio();
 #endif
 
 #if defined _WIN32 && defined SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING
@@ -494,7 +488,7 @@ int main(int argc, char *argv[])
 #ifdef _WIN32
     char *argvbuf;
     int32_t buildargc = win_buildargs(&argvbuf);
-    const char **buildargv = (const char **) Bmalloc(sizeof(char *)*(buildargc+1));
+    const char **buildargv = (const char **) Xmalloc(sizeof(char *)*(buildargc+1));
     char *wp = argvbuf;
 
     for (bssize_t i=0; i<buildargc; i++, wp++)
@@ -504,8 +498,17 @@ int main(int argc, char *argv[])
     }
     buildargv[buildargc] = NULL;
 
+#ifdef USE_PHYSFS
+    PHYSFS_init(buildargv[0]);
+    PHYSFS_setWriteDir(PHYSFS_getBaseDir());
+#endif
     r = app_main(buildargc, (const char **)buildargv);
 #else
+#ifdef USE_PHYSFS
+    int pfsi = PHYSFS_init(argv[0]);
+    assert(pfsi != 0);
+    PHYSFS_setWriteDir(PHYSFS_getUserDir());
+#endif
     r = app_main(argc, (char const * const *)argv);
 #endif
 
@@ -517,6 +520,11 @@ int main(int argc, char *argv[])
     gtkbuild_exit(r);
 #endif
 
+#ifdef __SWITCH__
+    if (sock >= 0)
+        close(sock);
+    socketExit();
+#endif
     return r;
 }
 
@@ -555,7 +563,7 @@ int32_t videoSetVsync(int32_t newSync)
         vsync_renderlayer = newSync;
 
         videoResetMode();
-        if (videoSetGameMode(fullscreen, xdim, ydim, bpp))
+        if (videoSetGameMode(fullscreen, xres, yres, bpp, upscalefactor))
             OSD_Printf("restartvid: Reset failed...\n");
     }
 
@@ -683,10 +691,12 @@ void uninitsystem(void)
 #endif
 
 #ifdef USE_OPENGL
+# if SDL_MAJOR_VERSION!=1
     SDL_GL_UnloadLibrary();
-#ifdef POLYMER
+# endif
+# ifdef POLYMER
     unloadglulibrary();
-#endif
+# endif
 #endif
 }
 
@@ -779,13 +789,160 @@ void debugprintf(const char *f, ...)
 
 // static int32_t joyblast=0;
 static SDL_Joystick *joydev = NULL;
+#if SDL_MAJOR_VERSION >= 2
+static SDL_GameController *controller = NULL;
+
+static void LoadSDLControllerDB()
+{
+    buildvfs_kfd fh = kopen4load("gamecontrollerdb.txt", 0);
+    if (fh == buildvfs_kfd_invalid)
+        return;
+
+    int flen = kfilelength(fh);
+    if (flen <= 0)
+    {
+        kclose(fh);
+        return;
+    }
+
+    char * dbuf = (char *)malloc(flen + 1);
+    if (!dbuf)
+    {
+        kclose(fh);
+        return;
+    }
+
+    if (kread_and_test(fh, dbuf, flen))
+    {
+        free(dbuf);
+        kclose(fh);
+        return;
+    }
+
+    dbuf[flen] = '\0';
+    kclose(fh);
+
+    SDL_RWops * rwops = SDL_RWFromConstMem(dbuf, flen);
+    if (!rwops)
+    {
+        free(dbuf);
+        return;
+    }
+
+    int i = SDL_GameControllerAddMappingsFromRW(rwops, 0);
+    if (i == -1)
+        buildprintf("Failed loading game controller database: %s\n", SDL_GetError());
+    else
+        buildputs("Loaded game controller database\n");
+
+    SDL_free(rwops);
+    free(dbuf);
+}
+#endif
+
+void joyScanDevices()
+{
+    inputdevices &= ~4;
+
+    if (controller)
+    {
+        SDL_GameControllerClose(controller);
+        controller = nullptr;
+    }
+    if (joydev)
+    {
+        SDL_JoystickClose(joydev);
+        joydev = nullptr;
+    }
+
+    int numjoysticks = SDL_NumJoysticks();
+    if (numjoysticks < 1)
+    {
+        buildputs("No game controllers found\n");
+    }
+    else
+    {
+        buildputs("Game controllers:\n");
+        for (int i = 0; i < numjoysticks; i++)
+        {
+            const char * name;
+#if SDL_MAJOR_VERSION >= 2
+            if (SDL_IsGameController(i))
+                name = SDL_GameControllerNameForIndex(i);
+            else
+#endif
+                name = SDL_JoystickNameForIndex(i);
+
+            buildprintf("  %d. %s\n", i+1, name);
+        }
+
+#if SDL_MAJOR_VERSION >= 2
+        for (int i = 0; i < numjoysticks; i++)
+        {
+            if ((controller = SDL_GameControllerOpen(i)))
+            {
+                buildprintf("Using controller %s\n", SDL_GameControllerName(controller));
+
+                joystick.numAxes    = SDL_CONTROLLER_AXIS_MAX;
+                joystick.numButtons = SDL_CONTROLLER_BUTTON_MAX;
+                joystick.numHats    = 0;
+                joystick.isGameController = 1;
+
+                Xfree(joystick.pAxis);
+                joystick.pAxis = (int32_t *)Xcalloc(joystick.numAxes, sizeof(int32_t));
+                Xfree(joystick.pHat);
+                joystick.pHat = nullptr;
+
+                inputdevices |= 4;
+
+                return;
+            }
+        }
+#endif
+
+        for (int i = 0; i < numjoysticks; i++)
+        {
+            if ((joydev = SDL_JoystickOpen(i)))
+            {
+                buildprintf("Using joystick %s\n", SDL_JoystickName(joydev));
+
+                // KEEPINSYNC duke3d/src/gamedefs.h, mact/include/_control.h
+                joystick.numAxes = min(9, SDL_JoystickNumAxes(joydev));
+                joystick.numButtons = min(32, SDL_JoystickNumButtons(joydev));
+                joystick.numHats = min((36-joystick.numButtons)/4,SDL_JoystickNumHats(joydev));
+                joystick.isGameController = 0;
+
+                initprintf("Joystick %d has %d axes, %d buttons, and %d hat(s).\n", i+1, joystick.numAxes, joystick.numButtons, joystick.numHats);
+
+                Xfree(joystick.pAxis);
+                joystick.pAxis = (int32_t *)Xcalloc(joystick.numAxes, sizeof(int32_t));
+
+                Xfree(joystick.pHat);
+                if (joystick.numHats)
+                    joystick.pHat = (int32_t *)Xcalloc(joystick.numHats, sizeof(int32_t));
+                else
+                    joystick.pHat = nullptr;
+
+                for (int j = 0; j < joystick.numHats; j++)
+                    joystick.pHat[j] = -1; // center
+
+                SDL_JoystickEventState(SDL_ENABLE);
+                inputdevices |= 4;
+
+                return;
+            }
+        }
+
+        buildputs("No controllers are usable\n");
+    }
+}
 
 //
 // initinput() -- init input system
 //
 int32_t initinput(void)
 {
-    int32_t i, j;
+    int32_t i;
 
 #ifdef _WIN32
     Win_GetOriginalLayoutName();
@@ -793,10 +950,12 @@ int32_t initinput(void)
 #endif
 
 #if defined EDUKE32_OSX
-    static char sdl_has3buttonmouse[] = "SDL_HAS3BUTTONMOUSE=1";
     // force OS X to operate in >1 button mouse mode so that LMB isn't adulterated
     if (!getenv("SDL_HAS3BUTTONMOUSE"))
+    {
+        static char sdl_has3buttonmouse[] = "SDL_HAS3BUTTONMOUSE=1";
         putenv(sdl_has3buttonmouse);
+    }
 #endif
 
     inputdevices = 1 | 2;  // keyboard (1) and mouse (2)
@@ -818,40 +977,20 @@ int32_t initinput(void)
         if (!keytranslation[i])
             continue;
 
-        Bstrncpyz(g_keyNameTable[keytranslation[i]], SDL_GetKeyName(SDL_SCANCODE_TO_KEYCODE(i)), sizeof(g_keyNameTable[i]));
+        Bstrncpyz(g_keyNameTable[keytranslation[i]], SDL_GetKeyName(SDL_SCANCODE_TO_KEYCODE(i)), sizeof(g_keyNameTable[0]));
     }
 
+#if SDL_MAJOR_VERSION >= 2
+    if (!SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER))
+#else
     if (!SDL_InitSubSystem(SDL_INIT_JOYSTICK))
+#endif
     {
-        i = SDL_NumJoysticks();
-        initprintf("%d joystick(s) found\n", i);
+#if SDL_MAJOR_VERSION >= 2
+        LoadSDLControllerDB();
+#endif
 
-        for (j = 0; j < i; j++)
-            initprintf("  %d. %s\n", j + 1, SDL_JoystickNameForIndex(j));
-
-        joydev = SDL_JoystickOpen(0);
-
-        if (joydev)
-        {
-            SDL_JoystickEventState(SDL_ENABLE);
-            inputdevices |= 4;
-
-            // KEEPINSYNC duke3d/src/gamedefs.h, mact/include/_control.h
-            joystick.numAxes = min(9, SDL_JoystickNumAxes(joydev));
-            joystick.numButtons = min(32, SDL_JoystickNumButtons(joydev));
-            joystick.numHats = min((36-joystick.numButtons)/4,SDL_JoystickNumHats(joydev));
-            initprintf("Joystick 1 has %d axes, %d buttons, and %d hat(s).\n", joystick.numAxes, joystick.numButtons, joystick.numHats);
-
-            joystick.pAxis = (int32_t *)Bcalloc(joystick.numAxes, sizeof(int32_t));
-
-            if (joystick.numHats)
-                joystick.pHat = (int32_t *)Bcalloc(joystick.numHats, sizeof(int32_t));
-
-            for (i = 0; i < joystick.numHats; i++) joystick.pHat[i] = -1;  // centre
-
-            joydead = (uint16_t *)Bcalloc(joystick.numAxes, sizeof(uint16_t));
-            joysatur = (uint16_t *)Bcalloc(joystick.numAxes, sizeof(uint16_t));
-        }
+        joyScanDevices();
     }
 
     return 0;
@@ -866,6 +1005,14 @@ void uninitinput(void)
     Win_SetKeyboardLayoutUS(0);
 #endif
     mouseUninit();
+
+#if SDL_MAJOR_VERSION >= 2
+    if (controller)
+    {
+        SDL_GameControllerClose(controller);
+        controller = NULL;
+    }
+#endif
 
     if (joydev)
     {
@@ -884,12 +1031,67 @@ const char *joyGetName(int32_t what, int32_t num)
         case 0:  // axis
             if ((unsigned)num > (unsigned)joystick.numAxes)
                 return NULL;
+
+#if SDL_MAJOR_VERSION >= 2
+            if (controller)
+            {
+# if 0
+                // Use this if SDL's provided strings ever become user-friendly.
+                return SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)num);
+# else
+                static char const * axisStrings[] =
+                {
+                    "Left Stick X-Axis",
+                    "Left Stick Y-Axis",
+                    "Right Stick X-Axis",
+                    "Right Stick Y-Axis",
+                    "Left Trigger",
+                    "Right Trigger",
+                    NULL
+                };
+                return axisStrings[num];
+# endif
+            }
+#endif
+
             Bsprintf(tmp, "Axis %d", num);
             return (char *)tmp;
 
         case 1:  // button
             if ((unsigned)num > (unsigned)joystick.numButtons)
                 return NULL;
+
+#if SDL_MAJOR_VERSION >= 2
+            if (controller)
+            {
+# if 0
+                // See above.
+                return SDL_GameControllerGetStringForButton((SDL_GameControllerButton)num);
+# else
+                static char const * buttonStrings[] =
+                {
+                    "A",
+                    "B",
+                    "X",
+                    "Y",
+                    "Back",
+                    "Guide",
+                    "Start",
+                    "Left Stick",
+                    "Right Stick",
+                    "Left Shoulder",
+                    "Right Shoulder",
+                    "D-Pad Up",
+                    "D-Pad Down",
+                    "D-Pad Left",
+                    "D-Pad Right",
+                    NULL
+                };
+                return buttonStrings[num];
+# endif
+            }
+#endif
+
             Bsprintf(tmp, "Button %d", num);
             return (char *)tmp;
 
@@ -908,11 +1110,9 @@ const char *joyGetName(int32_t what, int32_t num)
 //
 // initmouse() -- init mouse input
 //
-int32_t mouseInit(void)
+void mouseInit(void)
 {
-    g_mouseEnabled=g_mouseLockedToWindow;
-    mouseGrabInput(g_mouseLockedToWindow); // FIXME - SA
-    return 0;
+    mouseGrabInput(g_mouseEnabled = g_mouseLockedToWindow);  // FIXME - SA
 }
 
 //
@@ -1006,123 +1206,6 @@ void joyGetDeadZone(int32_t axis, uint16_t *dead, uint16_t *satur)
 //
 //
 
-static uint32_t timerfreq;
-static uint32_t timerlastsample;
-int32_t timerticspersec=0;
-static double msperu64tick = 0;
-static void(*usertimercallback)(void) = NULL;
-
-
-//
-// inittimer() -- initialize timer
-//
-int32_t timerInit(int32_t tickspersecond)
-{
-    if (timerfreq) return 0;	// already installed
-
-//    initprintf("Initializing timer\n");
-
-#if defined(_WIN32) && SDL_MAJOR_VERSION == 1
-    int32_t t = win_inittimer();
-    if (t < 0)
-        return t;
-#endif
-
-    timerfreq = 1000;
-    timerticspersec = tickspersecond;
-    timerlastsample = SDL_GetTicks() * timerticspersec / timerfreq;
-
-    usertimercallback = NULL;
-
-    msperu64tick = 1000.0 / (double)timerGetFreqU64();
-
-    return 0;
-}
-
-//
-// uninittimer() -- shut down timer
-//
-void timerUninit(void)
-{
-    timerfreq=0;
-#if defined(_WIN32) && SDL_MAJOR_VERSION==1
-    win_timerfreq=0;
-#endif
-    msperu64tick = 0;
-}
-
-//
-// sampletimer() -- update totalclock
-//
-void timerUpdate(void)
-{
-    if (!timerfreq) return;
-
-    int64_t i = SDL_GetTicks();
-    int32_t n = tabledivide64(i * timerticspersec, timerfreq) - timerlastsample;
-
-    if (n <= 0) return;
-
-    totalclock += n;
-    timerlastsample += n;
-
-    if (usertimercallback)
-        for (; n > 0; n--) usertimercallback();
-}
-
-#if defined LUNATIC
-//
-// getticks() -- returns the sdl ticks count
-//
-uint32_t timerGetTicks(void)
-{
-    return (uint32_t)SDL_GetTicks();
-}
-#endif
-
-// high-resolution timers for profiling
-
-#if SDL_MAJOR_VERSION != 1
-uint64_t timerGetTicksU64(void)
-{
-    return SDL_GetPerformanceCounter();
-}
-
-uint64_t timerGetFreqU64(void)
-{
-    return SDL_GetPerformanceFrequency();
-}
-#endif
-
-// Returns the time since an unspecified starting time in milliseconds.
-// (May be not monotonic for certain configurations.)
-ATTRIBUTE((flatten))
-double timerGetHiTicks(void)
-{
-    return (double)timerGetTicksU64() * msperu64tick;
-}
-
-//
-// gettimerfreq() -- returns the number of ticks per second the timer is configured to generate
-//
-int32_t timerGetFreq(void)
-{
-    return timerticspersec;
-}
-
-
-//
-// installusertimercallback() -- set up a callback function to be called when the timer is fired
-//
-void(*timerSetCallback(void(*callback)(void)))(void)
-{
-    void(*oldtimercallback)(void);
-
-    oldtimercallback = usertimercallback;
-    usertimercallback = callback;
-
-    return oldtimercallback;
-}
 
 
 
@@ -1142,10 +1225,11 @@ void(*timerSetCallback(void(*callback)(void)))(void)
 //
 static int sortmodes(const void *a_, const void *b_)
 {
-    int32_t x;
 
-    const struct validmode_t *a = (const struct validmode_t *)a_;
-    const struct validmode_t *b = (const struct validmode_t *)b_;
+    auto a = (const struct validmode_t *)b_;
+    auto b = (const struct validmode_t *)a_;
+
+    int x;
 
     if ((x = a->fs   - b->fs)   != 0) return x;
     if ((x = a->bpp  - b->bpp)  != 0) return x;
@@ -1194,19 +1278,25 @@ void videoGetModes(void)
     SDL_CHECKFSMODES(maxx, maxy);
 
     // add windowed modes next
+    // SDL sorts display modes largest to smallest, so we can just compare with mode 0
+    // to make sure we aren't adding modes that are larger than the actual screen res
+    SDL_GetDisplayMode(0, 0, &dispmode);
+
     for (i = 0; g_defaultVideoModes[i].x; i++)
     {
-        if (!SDL_CHECKMODE(g_defaultVideoModes[i].x, g_defaultVideoModes[i].y))
+        auto const &mode = g_defaultVideoModes[i];
+
+        if (mode.x > dispmode.w || mode.y > dispmode.h || !SDL_CHECKMODE(mode.x, mode.y))
             continue;
 
-        // HACK: 8-bit == Software, 32-bit == OpenGL
-        SDL_ADDMODE(g_defaultVideoModes[i].x, g_defaultVideoModes[i].y, 8, 0);
+        // 8-bit == Software, 32-bit == OpenGL
+        SDL_ADDMODE(mode.x, mode.y, 8, 0);
 
 #ifdef USE_OPENGL
         if (nogl)
             continue;
 
-        SDL_ADDMODE(g_defaultVideoModes[i].x, g_defaultVideoModes[i].y, 32, 0);
+        SDL_ADDMODE(mode.x, mode.y, 32, 0);
 #endif
     }
 
@@ -1273,33 +1363,15 @@ int32_t videoCheckMode(int32_t *x, int32_t *y, int32_t c, int32_t fs, int32_t fo
     return nearest;
 }
 
-static int32_t needpalupdate;
-static SDL_Color sdlayer_pal[256];
-
 static void destroy_window_resources()
 {
-#if !defined SDL_DISABLE_8BIT_BUFFER
-    if (sdl_buffersurface)
-        SDL_FreeSurface(sdl_buffersurface);
-
-    sdl_buffersurface = NULL;
-#endif
 /* We should NOT destroy the window surface. This is done automatically
    when SDL_DestroyWindow or SDL_SetVideoMode is called.             */
 
 #if SDL_MAJOR_VERSION == 2
-    if (sdl_renderer && sdl_texture && sdl_surface)
-        SDL_FreeSurface(sdl_surface);
-    sdl_surface = NULL;
     if (sdl_context)
         SDL_GL_DeleteContext(sdl_context);
     sdl_context = NULL;
-    if (sdl_texture)
-        SDL_DestroyTexture(sdl_texture);
-    sdl_texture = NULL;
-    if (sdl_renderer)
-        SDL_DestroyRenderer(sdl_renderer);
-    sdl_renderer = NULL;
     if (sdl_window)
         SDL_DestroyWindow(sdl_window);
     sdl_window = NULL;
@@ -1309,9 +1381,9 @@ static void destroy_window_resources()
 #ifdef USE_OPENGL
 void sdlayer_setvideomode_opengl(void)
 {
+    glsurface_destroy();
     polymost_glreset();
 
-    glEnable(GL_TEXTURE_2D);
     glShadeModel(GL_SMOOTH);  // GL_FLAT
     glClearColor(0, 0, 0, 1.0);  // Black Background
     glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);  // Use FASTEST for ortho!
@@ -1396,6 +1468,8 @@ void sdlayer_setvideomode_opengl(void)
     glinfo.debugoutput = !!Bstrstr(glinfo.extensions, "GL_ARB_debug_output");
     glinfo.bufferstorage = !!Bstrstr(glinfo.extensions, "GL_ARB_buffer_storage");
     glinfo.sync = !!Bstrstr(glinfo.extensions, "GL_ARB_sync");
+    glinfo.depthclamp = !!Bstrstr(glinfo.extensions, "GL_ARB_depth_clamp");
+    glinfo.clipcontrol = !!Bstrstr(glinfo.extensions, "GL_ARB_clip_control");
 
     if (Bstrstr(glinfo.extensions, "WGL_3DFX_gamma_control"))
     {
@@ -1432,10 +1506,7 @@ void sdlayer_setvideomode_opengl(void)
 int32_t setvideomode_sdlcommon(int32_t *x, int32_t *y, int32_t c, int32_t fs, int32_t *regrab)
 {
     if ((fs == fullscreen) && (*x == xres) && (*y == yres) && (c == bpp) && !videomodereset)
-    {
-        OSD_ResizeDisplay(xres, yres);
         return 0;
-    }
 
     if (videoCheckMode(x, y, c, fs, 0) < 0)
         return -1;
@@ -1456,9 +1527,23 @@ int32_t setvideomode_sdlcommon(int32_t *x, int32_t *y, int32_t c, int32_t fs, in
     while (lockcount) videoEndDrawing();
 
 #ifdef USE_OPENGL
-    if (bpp > 8 && sdl_surface)
-        polymost_glreset();
+    if (sdl_surface)
+    {
+        if (bpp > 8)
+            polymost_glreset();
+    }
+    if (!nogl)
+    {
+        if (bpp == 8)
+            glsurface_destroy();
+        if ((fs == fullscreen) && (*x == xres) && (*y == yres) && (bpp != 0) && !videomodereset)
+            return 0;
+    }
+    else
 #endif
+    {
+       softsurface_destroy();
+    }
 
     // clear last gamma/contrast/brightness so that it will be set anew
     lastvidgcb[0] = lastvidgcb[1] = lastvidgcb[2] = 0.0f;
@@ -1471,7 +1556,7 @@ void setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int
     wm_setapptitle(apptitle);
 
 #ifdef USE_OPENGL
-    if (c > 8)
+    if (!nogl)
         sdlayer_setvideomode_opengl();
 #endif
 
@@ -1485,7 +1570,6 @@ void setvideomode_sdlcommonpost(int32_t x, int32_t y, int32_t c, int32_t fs, int
     lockcount = 0;
     modechange = 1;
     videomodereset = 0;
-    OSD_ResizeDisplay(xres, yres);
 
     // save the current system gamma to determine if gamma is available
 #ifndef EDUKE32_GLES
@@ -1531,56 +1615,7 @@ void setrefreshrate(void)
     if (!newmode.refresh_rate)
         newmode.refresh_rate = 60;
 
-    currentVBlankInterval = 1000/newmode.refresh_rate;
-}
-
-static void sdl_trycreaterenderer_fail(char const * const failurepoint)
-{
-    initprintf("Falling back to SDL_GetWindowSurface: %s failed: %s\n", failurepoint, SDL_GetError());
-    SDL_DestroyRenderer(sdl_renderer);
-    sdl_renderer = NULL;
-}
-
-static void sdl_trycreaterenderer(int32_t const x, int32_t const y)
-{
-    int const flags = SDL_RENDERER_ACCELERATED | (vsync_renderlayer ? SDL_RENDERER_PRESENTVSYNC : 0);
-
-    sdl_renderer = SDL_CreateRenderer(sdl_window, -1, flags);
-    if (!sdl_renderer)
-    {
-        sdl_trycreaterenderer_fail("SDL_CreateRenderer");
-        return;
-    }
-
-    SDL_RendererInfo sdl_rendererinfo;
-    SDL_GetRendererInfo(sdl_renderer, &sdl_rendererinfo);
-
-    if (sdl_rendererinfo.flags & SDL_RENDERER_SOFTWARE) // this would be useless
-    {
-        initprintf("Falling back to SDL_GetWindowSurface: software SDL_Renderer \"%s\" provides no benefit.\n", sdl_rendererinfo.name);
-        SDL_DestroyRenderer(sdl_renderer);
-        sdl_renderer = NULL;
-        return;
-    }
-
-    initprintf("Trying SDL_Renderer \"%s\"\n", sdl_rendererinfo.name);
-
-    sdl_texture = SDL_CreateTexture(sdl_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, x, y);
-    if (!sdl_texture)
-    {
-        sdl_trycreaterenderer_fail("SDL_CreateTexture");
-        return;
-    }
-
-    sdl_surface = SDL_CreateRGBSurface(0, x, y, 32, 0, 0, 0, 0);
-
-    if (!sdl_surface)
-    {
-        SDL_DestroyTexture(sdl_texture);
-        sdl_texture = NULL;
-        sdl_trycreaterenderer_fail("SDL_CreateRGBSurface");
-        return;
-    }
+    currentVBlankInterval = timerGetFreqU64()/(double)newmode.refresh_rate;
 }
 
 int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
@@ -1588,17 +1623,29 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
     int32_t regrab = 0, ret;
 
     ret = setvideomode_sdlcommon(&x, &y, c, fs, &regrab);
-    if (ret != 1) return ret;
+    if (ret != 1)
+    {
+        if (ret == 0)
+        {
+            setvideomode_sdlcommonpost(x, y, c, fs, regrab);
+        }
+        return ret;
+    }
 
     // deinit
     destroy_window_resources();
 
     initprintf("Setting video mode %dx%d (%d-bpp %s)\n", x, y, c, ((fs & 1) ? "fullscreen" : "windowed"));
 
+    SDL_DisplayMode desktopmode;
+    SDL_GetDesktopDisplayMode(0, &desktopmode);
+
+    int const windowedMode = (desktopmode.w == x && desktopmode.h == y) ? SDL_WINDOW_BORDERLESS : 0;
+
 #ifdef USE_OPENGL
-    if (c > 8)
+    if (c > 8 || !nogl)
     {
-        int32_t i, j;
+        int32_t i;
 #ifdef USE_GLEXT
         int32_t multisamplecheck = (glmultisample > 0);
 #else
@@ -1607,9 +1654,6 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
         if (nogl)
             return -1;
 
-#ifdef _WIN32
-        win_setvideomode(c);
-#endif
         struct glattribs
         {
             SDL_GLattr attr;
@@ -1624,6 +1668,9 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 #ifdef USE_GLEXT
               { SDL_GL_MULTISAMPLEBUFFERS, glmultisample > 0 },
               { SDL_GL_MULTISAMPLESAMPLES, glmultisample },
+#endif
+#ifdef __SWITCH__
+              { SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY },
 #endif
               { SDL_GL_STENCIL_SIZE, 1 },
               { SDL_GL_ACCELERATED_VISUAL, 1 },
@@ -1651,8 +1698,16 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
             }
 
             gladLoadGLLoader(SDL_GL_GetProcAddress);
+            if (GLVersion.major < 2)
+            {
+                initprintf("Your computer does not support OpenGL version 2 or greater. GL modes are unavailable.\n");
+                nogl = 1;
+                destroy_window_resources();
+                return -1;
+            }
 
-            SDL_SetWindowFullscreen(sdl_window, ((fs & 1) ? SDL_WINDOW_FULLSCREEN : 0));
+            // this is using the windowedMode variable to determine whether to pass SDL_WINDOW_FULLSCREEN or SDL_WINDOW_FULLSCREEN_DESKTOP
+            SDL_SetWindowFullscreen(sdl_window, ((fs & 1) ? windowedMode ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_FULLSCREEN : windowedMode));
             SDL_GL_SetSwapInterval(vsync_renderlayer);
 
             setrefreshrate();
@@ -1670,8 +1725,6 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 
         setrefreshrate();
 
-        sdl_trycreaterenderer(x, y);
-
         if (!sdl_surface)
         {
             sdl_surface = SDL_GetWindowSurface(sdl_window);
@@ -1679,20 +1732,7 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
                 SDL2_VIDEO_ERR("SDL_GetWindowSurface");
         }
 
-#if !defined SDL_DISABLE_8BIT_BUFFER
-        sdl_buffersurface = SDL_CreateRGBSurface(0, x, y, c, 0, 0, 0, 0);
-
-        if (!sdl_buffersurface)
-            SDL2_VIDEO_ERR("SDL_CreateRGBSurface");
-#endif
-
-        if (!sdl_palptr)
-            sdl_palptr = SDL_AllocPalette(256);
-
-        if (SDL_SetSurfacePalette(sdl_buffersurface, sdl_palptr) < 0)
-            initprintf("SDL_SetSurfacePalette failed: %s\n", SDL_GetError());
-
-        SDL_SetWindowFullscreen(sdl_window, ((fs & 1) ? SDL_WINDOW_FULLSCREEN : 0));
+        SDL_SetWindowFullscreen(sdl_window, ((fs & 1) ? SDL_WINDOW_FULLSCREEN : windowedMode));
     }
 
     SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "1");
@@ -1736,17 +1776,54 @@ void videoBeginDrawing(void)
     if (lockcount++ > 0)
         return;
 
-    if (offscreenrendering) return;
+    static intptr_t backupFrameplace = 0;
 
-    if (SDL_MUSTLOCK(sdl_buffersurface)) SDL_LockSurface(sdl_buffersurface);
-    frameplace = (intptr_t)sdl_buffersurface->pixels;
-
-    if (sdl_buffersurface->pitch != bytesperline || modechange)
+    if (inpreparemirror)
     {
-        bytesperline = sdl_buffersurface->pitch;
+        //POGO: if we are offscreenrendering and we need to render a mirror
+        //      or we are rendering a mirror and we start offscreenrendering,
+        //      backup our offscreen target so we can restore it later
+        //      (but only allow one level deep,
+        //       i.e. no viewscreen showing a camera showing a mirror that reflects the same viewscreen and recursing)
+        if (offscreenrendering)
+        {
+            if (!backupFrameplace)
+                backupFrameplace = frameplace;
+            else if (frameplace != (intptr_t)mirrorBuffer &&
+                     frameplace != backupFrameplace)
+                return;
+        }
 
+        frameplace = (intptr_t)mirrorBuffer;
+
+        if (offscreenrendering)
+            return;
+    }
+    else if (offscreenrendering)
+    {
+        if (backupFrameplace)
+        {
+            frameplace = backupFrameplace;
+            backupFrameplace = 0;
+        }
+        return;
+    }
+    else
+#ifdef USE_OPENGL
+    if (!nogl)
+    {
+        frameplace = (intptr_t)glsurface_getBuffer();
+    }
+    else
+#endif
+    {
+        frameplace = (intptr_t)softsurface_getBuffer();
+    }
+
+    if (modechange)
+    {
+        bytesperline = xdim;
         calc_ylookup(bytesperline, ydim);
-
         modechange=0;
     }
 }
@@ -1768,10 +1845,6 @@ void videoEndDrawing(void)
     if (!offscreenrendering) frameplace = 0;
     if (lockcount == 0) return;
     lockcount = 0;
-
-    if (offscreenrendering) return;
-
-    if (SDL_MUSTLOCK(sdl_buffersurface)) SDL_UnlockSurface(sdl_buffersurface);
 }
 
 //
@@ -1792,23 +1865,42 @@ void videoShowFrame(int32_t w)
 #endif
 
 #ifdef USE_OPENGL
-    if (bpp > 8)
+    if (!nogl)
     {
-        if (palfadedelta)
-            fullscreen_tint_gl(palfadergb.r, palfadergb.g, palfadergb.b, palfadedelta);
+        if (bpp > 8)
+        {
+            if (palfadedelta)
+                fullscreen_tint_gl(palfadergb.r, palfadergb.g, palfadergb.b, palfadedelta);
 
 #ifdef __ANDROID__
-        AndroidDrawControls();
+            AndroidDrawControls();
 #endif
+        }
+        else
+        {
+            glsurface_blitBuffer();
+        }
 
-        static uint32_t lastSwapTime = 0;
         SDL_GL_SwapWindow(sdl_window);
+
         if (vsync)
         {
-            // busy loop until we're ready to update again
-            while (SDL_GetTicks()-lastSwapTime < currentVBlankInterval) {}
+            switch (swapcomplete)
+            {
+                case 1: glFinish(); break;
+                case 2:
+                {
+                    static uint64_t lastSwapTime;
+                    // busy loop until we're ready to update again
+                    // sit on it and spin
+                    uint64_t swapTime = timerGetTicksU64();
+                    while ((double)(timerGetTicksU64() - lastSwapTime) < currentVBlankInterval) { }
+                    lastSwapTime = swapTime;
+                }
+                break;
+                case 3: glFlush(); break;
+            }
         }
-        lastSwapTime = SDL_GetTicks();
         return;
     }
 #endif
@@ -1821,27 +1913,11 @@ void videoShowFrame(int32_t w)
         while (lockcount) videoEndDrawing();
     }
 
-    // deferred palette updating
-    if (needpalupdate)
-    {
-        if (SDL_SetPaletteColors(sdl_palptr, sdlayer_pal, 0, 256) < 0)
-            initprintf("SDL_SetPaletteColors failed: %s\n", SDL_GetError());
-        needpalupdate = 0;
-    }
+    if (SDL_MUSTLOCK(sdl_surface)) SDL_LockSurface(sdl_surface);
+    softsurface_blitBuffer((uint32_t*) sdl_surface->pixels, sdl_surface->format->BitsPerPixel);
+    if (SDL_MUSTLOCK(sdl_surface)) SDL_UnlockSurface(sdl_surface);
 
-#if !defined SDL_DISABLE_8BIT_BUFFER
-    SDL_BlitSurface(sdl_buffersurface, NULL, sdl_surface, NULL);
-#endif
-
-    if (sdl_renderer && sdl_texture)
-    {
-        SDL_UpdateTexture(sdl_texture, NULL, sdl_surface->pixels, sdl_surface->pitch);
-
-        SDL_RenderClear(sdl_renderer);
-        SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL);
-        SDL_RenderPresent(sdl_renderer);
-    }
-    else if (SDL_UpdateWindowSurface(sdl_window))
+    if (SDL_UpdateWindowSurface(sdl_window))
     {
         // If a fullscreen X11 window is minimized then this may be required.
         // FIXME: What to do if this fails...
@@ -1855,21 +1931,24 @@ void videoShowFrame(int32_t w)
 //
 int32_t videoUpdatePalette(int32_t start, int32_t num)
 {
+    UNREFERENCED_PARAMETER(start);
+    UNREFERENCED_PARAMETER(num);
+
     if (bpp > 8)
         return 0;  // no palette in opengl
 
-    Bmemcpy(sdlayer_pal, curpalettefaded, 256 * 4);
-
-    for (native_t i = start, n = num; n > 0; i++, n--)
-        curpalettefaded[i].f =
-#if SDL_MAJOR_VERSION == 1
-        sdlayer_pal[i].unused
-#else
-        sdlayer_pal[i].a
+#ifdef USE_OPENGL
+    if (!nogl)
+        glsurface_setPalette(curpalettefaded);
+    else
 #endif
-        = 0;
-
-    needpalupdate = 1;
+    {
+        if (sdl_surface)
+            softsurface_setPalette(curpalettefaded,
+                                   sdl_surface->format->Rmask,
+                                   sdl_surface->format->Gmask,
+                                   sdl_surface->format->Bmask);
+    }
 
     return 0;
 }
@@ -1925,10 +2004,13 @@ int32_t videoSetGamma(void)
 */
 #endif
 
+        OSD_Printf("videoSetGamma(): %s\n", SDL_GetError());
+
 #ifndef EDUKE32_GLES
 #if SDL_MAJOR_VERSION == 1
         SDL_SetGammaRamp(&sysgamma[0][0], &sysgamma[1][0], &sysgamma[2][0]);
 #else
+
         if (sdl_window)
             SDL_SetWindowGammaRamp(sdl_window, &sysgamma[0][0], &sysgamma[1][0], &sysgamma[2][0]);
 #endif
@@ -1949,7 +2031,7 @@ int32_t videoSetGamma(void)
 }
 
 #if !defined __APPLE__ && !defined EDUKE32_TOUCH_DEVICES
-extern struct sdlappicon sdlappicon;
+extern "C" struct sdlappicon sdlappicon;
 static inline SDL_Surface *loadappicon(void)
 {
     SDL_Surface *surf = SDL_CreateRGBSurfaceFrom((void *)sdlappicon.pixels, sdlappicon.width, sdlappicon.height, 32,
@@ -2081,16 +2163,23 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
 #endif
 
         case SDL_JOYAXISMOTION:
+#if SDL_MAJOR_VERSION >= 2
+            if (joystick.isGameController)
+                break;
+            fallthrough__;
+        case SDL_CONTROLLERAXISMOTION:
+#endif
             if (appactive && ev->jaxis.axis < joystick.numAxes)
             {
-                joystick.pAxis[ev->jaxis.axis] = ev->jaxis.value * 10000 / 32767;
-                if ((joystick.pAxis[ev->jaxis.axis] < joydead[ev->jaxis.axis]) &&
-                    (joystick.pAxis[ev->jaxis.axis] > -joydead[ev->jaxis.axis]))
+                joystick.pAxis[ev->jaxis.axis] = ev->jaxis.value;
+                int32_t const scaledValue = ev->jaxis.value * 10000 / 32767;
+                if ((scaledValue < joydead[ev->jaxis.axis]) &&
+                    (scaledValue > -joydead[ev->jaxis.axis]))
                     joystick.pAxis[ev->jaxis.axis] = 0;
-                else if (joystick.pAxis[ev->jaxis.axis] >= joysatur[ev->jaxis.axis])
-                    joystick.pAxis[ev->jaxis.axis] = 10000;
-                else if (joystick.pAxis[ev->jaxis.axis] <= -joysatur[ev->jaxis.axis])
-                    joystick.pAxis[ev->jaxis.axis] = -10000;
+                else if (scaledValue >= joysatur[ev->jaxis.axis])
+                    joystick.pAxis[ev->jaxis.axis] = 32767;
+                else if (scaledValue <= -joysatur[ev->jaxis.axis])
+                    joystick.pAxis[ev->jaxis.axis] = -32767;
                 else
                     joystick.pAxis[ev->jaxis.axis] = joystick.pAxis[ev->jaxis.axis] * 10000 / joysatur[ev->jaxis.axis];
             }
@@ -2123,12 +2212,20 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
 
         case SDL_JOYBUTTONDOWN:
         case SDL_JOYBUTTONUP:
+#if SDL_MAJOR_VERSION >= 2
+            if (joystick.isGameController)
+                break;
+            fallthrough__;
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP:
+#endif
             if (appactive && ev->jbutton.button < joystick.numButtons)
             {
                 if (ev->jbutton.state == SDL_PRESSED)
                     joystick.bits |= 1 << ev->jbutton.button;
                 else
                     joystick.bits &= ~(1 << ev->jbutton.button);
+
 #ifdef GEKKO
                 if (ev->jbutton.button == 0) // WII_A
                     handleevents_updatemousestate(ev->jbutton.state);
@@ -2167,13 +2264,13 @@ int32_t handleevents_pollsdl(void)
                         if (OSD_HandleChar(code))
                             keyBufferInsert(code);
                     }
-                } while (j < SDL_TEXTINPUTEVENT_TEXT_SIZE && ev.text.text[++j]);
+                } while (j < SDL_TEXTINPUTEVENT_TEXT_SIZE-1 && ev.text.text[++j]);
                 break;
 
             case SDL_KEYDOWN:
             case SDL_KEYUP:
             {
-                const SDL_Scancode sc = ev.key.keysym.scancode;
+                auto const &sc = ev.key.keysym.scancode;
                 code = keytranslation[sc];
 
                 // Modifiers that have to be held down to be effective
@@ -2290,13 +2387,17 @@ int32_t handleevents_pollsdl(void)
                 if ((j = OSD_HandleScanCode(code, (ev.key.type == SDL_KEYDOWN))) <= 0)
                 {
                     if (j == -1)  // osdkey
+                    {
                         for (j = 0; j < NUMKEYS; ++j)
+                        {
                             if (keyGetState(j))
                             {
                                 keySetState(j, 0);
                                 if (keypresscallback)
                                     keypresscallback(j, 0);
                             }
+                        }
+                    }
                     break;
                 }
 

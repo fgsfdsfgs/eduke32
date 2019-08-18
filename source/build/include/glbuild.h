@@ -4,16 +4,19 @@
 
 #ifdef USE_OPENGL
 
-#if !defined GEKKO && !defined EDUKE32_GLES
+#if !defined GEKKO && !defined EDUKE32_GLES && !defined __SWITCH__
 # define DYNAMIC_GL
 # define DYNAMIC_GLU
 # define DYNAMIC_GLEXT
 # define USE_GLEXT
+#elif defined __SWITCH__
+# define USE_GLEXT
 #endif
+
 
 #if defined EDUKE32_OSX
 # include <OpenGL/glu.h>
-#else
+#elif !defined __SWITCH__
 # include <GL/glu.h>
 #endif
 #if defined EDUKE32_GLES

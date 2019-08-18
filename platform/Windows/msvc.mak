@@ -115,7 +115,7 @@ ENET_CFLAGS=/I$(ENET_INC) /I$(ENET_SRC)
 LIBXMPLITE_CFLAGS=/I$(LIBXMPLITE_INC) /I$(LIBXMPLITE_INC)/libxmp-lite /I$(LIBXMPLITE_SRC) -DHAVE_ROUND -DLIBXMP_CORE_PLAYER -DBUILDING_STATIC
 AUDIOLIB_CFLAGS=/I$(AUDIOLIB_INC) /I$(AUDIOLIB_SRC)
 
-LIBS=user32.lib gdi32.lib shell32.lib winmm.lib ws2_32.lib comctl32.lib shlwapi.lib oleaut32.lib ole32.lib imm32.lib version.lib \
+LIBS=user32.lib gdi32.lib shell32.lib winmm.lib ws2_32.lib comctl32.lib shlwapi.lib oleaut32.lib ole32.lib imm32.lib SetupAPI.Lib version.lib \
      libogg.a libvorbis.a libvorbisfile.a libxmp-lite.a libvpx.a dxguid.lib dsound.lib advapi32.lib libcompat-to-msvc.a
 
 !if ("$(RENDERTYPE)"=="SDL")
@@ -149,6 +149,7 @@ ENGINE_OBJS= \
 	$(ENGINE_OBJ)\animvpx.$o \
 	$(ENGINE_OBJ)\baselayer.$o \
 	$(ENGINE_OBJ)\cache1d.$o \
+	$(ENGINE_OBJ)\klzw.$o \
 	$(ENGINE_OBJ)\common.$o \
 	$(ENGINE_OBJ)\compat.$o \
 	$(ENGINE_OBJ)\crc32.$o \
@@ -161,6 +162,7 @@ ENGINE_OBJS= \
 	$(ENGINE_OBJ)\hash.$o \
 	$(ENGINE_OBJ)\palette.$o \
         $(ENGINE_OBJ)\glbuild.$o \
+	$(ENGINE_OBJ)\glsurface.$o \
         $(ENGINE_OBJ)\texcache.$o \
         $(ENGINE_OBJ)\kplib.$o \
         $(ENGINE_OBJ)\hightile.$o \
@@ -168,6 +170,7 @@ ENGINE_OBJS= \
         $(ENGINE_OBJ)\polymer.$o \
         $(ENGINE_OBJ)\mdsprite.$o \
         $(ENGINE_OBJ)\voxmodel.$o \
+	$(ENGINE_OBJ)\tilepacker.$o \
 	$(ENGINE_OBJ)\dxtfilter.$o \
 	$(ENGINE_OBJ)\textfont.$o \
 	$(ENGINE_OBJ)\smalltextfont.$o \
@@ -182,6 +185,7 @@ ENGINE_OBJS= \
 	$(ENGINE_OBJ)\winbits.$o \
 	$(ENGINE_OBJ)\xxhash.$o \
 	$(ENGINE_OBJ)\screenshot.$o \
+	$(ENGINE_OBJ)\softsurface.$o \
 	$(ENGINE_OBJ)\mhk.$o \
 	$(ENGINE_OBJ)\pngwrite.$o \
 	$(ENGINE_OBJ)\miniz.$o \
@@ -249,7 +253,7 @@ AUDIOLIB_OBJS=$(AUDIOLIB_OBJ)\drivers.$o \
 	$(AUDIOLIB_OBJ)\xmp.$o \
 	$(AUDIOLIB_OBJ)\driver_nosound.$o
 
-MACT_OBJS=$(MACT_OBJ)\file_lib.$o \
+MACT_OBJS= \
 	$(MACT_OBJ)\control.$o \
 	$(MACT_OBJ)\keyboard.$o \
 	$(MACT_OBJ)\joystick.$o \
@@ -273,7 +277,7 @@ DUKE3D_OBJS=$(DUKE3D_OBJ)\game.$o \
 	$(DUKE3D_OBJ)\input.$o \
 	$(DUKE3D_OBJ)\menus.$o \
 	$(DUKE3D_OBJ)\namesdyn.$o \
-    $(DUKE3D_OBJ)\net.$o \
+    $(DUKE3D_OBJ)\network.$o \
 	$(DUKE3D_OBJ)\player.$o \
 	$(DUKE3D_OBJ)\premap.$o \
 	$(DUKE3D_OBJ)\savegame.$o \

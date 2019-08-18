@@ -480,7 +480,7 @@ void G_DrawFrags(void)
 
     for (TRAVERSE_CONNECT(i))
     {
-        const DukePlayer_t *ps = g_player[i].ps;
+        auto const ps = g_player[i].ps;
         minitext(21+(73*(i&3)), 2+((i&28)<<1), g_player[i].user_name, ps->palookup, 2+8+16);
         Bsprintf(tempbuf, "%d", ps->frag-ps->fraggedself);
         minitext(17+50+(73*(i&3)), 2+((i&28)<<1), tempbuf, ps->palookup, 2+8+16);
@@ -546,13 +546,13 @@ static inline void rotatesprite_althud(int32_t sx, int32_t sy, int32_t z, int16_
 static inline void rotatesprite_althudr(int32_t sx, int32_t sy, int32_t z, int16_t a, int16_t picnum, int8_t dashade, char dapalnum, int32_t dastat)
 {
     if (videoGetRenderMode() >= REND_POLYMOST && althud_shadows)
-        rotatesprite_(sbarxr(sx + 1), sbary(sy + 1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, 0, 0, xdim - 1, ydim - 1);
+        rotatesprite_(sbarxr(sx - 1), sbary(sy + 1), z, a, picnum, 127, 4, dastat + POLYMOSTTRANS2, 0, 0, 0, 0, xdim - 1, ydim - 1);
     rotatesprite_(sbarxr(sx), sbary(sy), z, a, picnum, dashade, dapalnum, dastat, 0, 0, 0, 0, xdim - 1, ydim - 1);
 }
 
 void G_DrawStatusBar(int32_t snum)
 {
-    const DukePlayer_t *const p = g_player[snum].ps;
+    auto const p = g_player[snum].ps;
     int32_t i, j, o, u;
     int32_t permbit = 0;
 
@@ -841,7 +841,10 @@ void G_DrawStatusBar(int32_t snum)
             sbar.ammo_amount[i] = p->ammo_amount[i];
             if (i < 9)
                 u |= ((2<<i)+1024);
-            else u |= 65536L+1024;
+            else if (WW2GI && i == 11)
+                u |= 1024 + 128;
+            else
+                u |= 65536L+1024;
         }
 
         if ((sbar.gotweapon & (1<<i)) != (p->gotweapon & (1<<i)))
@@ -852,7 +855,8 @@ void G_DrawStatusBar(int32_t snum)
 
             if (i < 9)
                 u |= ((2<<i)+1024);
-            else u |= 65536L+1024;
+            else
+                u |= 65536L+1024;
         }
     }
 

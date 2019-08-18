@@ -1,6 +1,10 @@
 // "Build Engine & Tools" Copyright (c) 1993-1997 Ken Silverman
 // Ken Silverman's official web site: "http://www.advsys.net/ken"
 // See the included license file "BUILDLIC.TXT" for license info.
+//
+// This file has been modified from Ken Silverman's original release
+// by Jonathon Fowler (jf@jonof.id.au)
+// by the EDuke32 team (development@voidpoint.com)
 
 #ifndef editor_h_
 #define editor_h_
@@ -110,13 +114,13 @@ extern int32_t gridlock;
 extern int32_t g_maxCacheSize;
 
 extern int32_t g_lazy_tileselector;
-extern int32_t m32_osd_tryscript;
+extern bool m32_osd_tryscript;
 extern int32_t showheightindicators;
 extern int32_t showambiencesounds;
 
 extern int32_t numgraysects;
-extern uint8_t graysectbitmap[MAXSECTORS>>3];
-extern uint8_t graywallbitmap[MAXWALLS>>3];
+extern uint8_t graysectbitmap[(MAXSECTORS+7)>>3];
+extern uint8_t graywallbitmap[(MAXWALLS+7)>>3];
 extern int32_t autogray, showinnergray;
 
 extern void drawgradient(void);
@@ -351,7 +355,7 @@ void inflineintersect(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
 
 void ovhscrcoords(int32_t x, int32_t y, int32_t *scrx, int32_t *scry);
 
-extern uint8_t hlsectorbitmap[MAXSECTORS>>3];
+extern uint8_t hlsectorbitmap[(MAXSECTORS+7)>>3];
 
 void test_map(int32_t mode);
 
@@ -378,6 +382,7 @@ int32_t select_sprite_tag(int32_t spritenum);
 
 extern int32_t m32_2d3dmode, m32_2d3dsize;
 extern vec2_t m32_2d3d;
+extern int32_t m32_3dundo;
 
 #define XSIZE_2D3D (xdim2d / m32_2d3dsize)
 #define YSIZE_2D3D (ydim2d / m32_2d3dsize)
@@ -397,8 +402,6 @@ static inline int32_t m32_is2d3dmode(void)
 
 extern int32_t editorGet2dSpriteColor(int32_t spr);
 
-#define NEXTWALL(i) (wall[wall[i].nextwall])
-#define POINT2(i) (wall[wall[i].point2])
 #define SPRITESEC(j) (sector[sprite[j].sectnum])
 
 #define SCRIPTHISTSIZ 32  // should be the same as OSD_HISTORYDEPTH for maximum win, should be a power of two

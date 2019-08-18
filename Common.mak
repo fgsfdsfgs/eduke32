@@ -11,6 +11,8 @@ SYNTHESIS := 0
 override empty :=
 override space := $(empty) $(empty)
 override comma := ,
+override paren_open := (
+override paren_close := )
 
 
 ##### Detect platform
@@ -110,6 +112,7 @@ endif
 DONT_PRINT := > $(NULLSTREAM) 2>&1
 DONT_PRINT_STDERR := 2> $(NULLSTREAM)
 DONT_FAIL := ; exit 0
+ESCAPE=\\
 
 HAVE_SH := 1
 # when no sh.exe is found in PATH on Windows, no path is prepended to it
@@ -129,9 +132,16 @@ endef
 define RMDIR
     rm -rf $(filter-out / *,$1)
 endef
+define CAT
+    cat $1
+endef
+define RAW_ECHO
+    echo '$1'
+endef
 
 ifeq (0,$(HAVE_SH))
     DONT_FAIL := & rem
+    ESCAPE=^
 
     define LL
         dir $(subst /,\,$1)
@@ -144,6 +154,12 @@ ifeq (0,$(HAVE_SH))
     endef
     define RMDIR
         rmdir /s /q $(subst /,\,$(filter-out / *,$1)) $(DONT_PRINT_STDERR) $(DONT_FAIL)
+    endef
+    define CAT
+        type $(subst /,\,$1)
+    endef
+    define RAW_ECHO
+        echo $(subst ",$(ESCAPE)",$(subst $(paren_open),$(ESCAPE)$(paren_open),$(subst $(paren_close),$(ESCAPE)$(paren_close),$1)))
     endef
 
     # if, printf, exit, and ; are unavailable without sh
@@ -362,6 +378,12 @@ HAVE_XMP := 1
 RENDERTYPE := SDL
 MIXERTYPE := SDL
 SDL_TARGET := 2
+USE_PHYSFS := 0
+
+ifneq (0,$(USE_PHYSFS))
+    # PhysFS requires this to be off
+    override CPLUSPLUS := 0
+endif
 
 # Debugging/Build options
 FORCEDEBUG := 0
@@ -401,12 +423,12 @@ else ifeq ($(PLATFORM),WII)
     override HAVE_FLAC := 0
     SDL_TARGET := 1
 else ifeq ($(PLATFORM),SWITCH)
-    override USE_OPENGL := 0
+    override POLYMER := 0
     override NETCODE := 0
     override HAVE_GTK2 := 0
     override NOASM := 1
-    override USE_LIBVPX := 0
-    override HAVE_FLAC := 0
+    override USE_LIBVPX := 1
+    override HAVE_FLAC := 1
     PKG_CONFIG := $(DEVKITPRO)/portlibs/switch/bin/aarch64-none-elf-pkg-config
 else ifeq ($(PLATFORM),$(filter $(PLATFORM),DINGOO GCW QNX SUNOS SYLLABLE))
     override USE_OPENGL := 0
@@ -582,7 +604,7 @@ else ifeq ($(PLATFORM),SWITCH)
     COMMONFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -ffast-math -ffunction-sections -fdata-sections
     # LINKERFLAGS += -Wl,--gc-sections
     COMPILERFLAGS += -D__SWITCH__ -I$(DEVKITPRO)/libnx/include -I$(DEVKITPRO)/portlibs/switch/include
-    LIBDIRS += -L$(DEVKITPRO)/libnx/lib -L$(DEVKITPRO)/portlibs/switch/lib -specs=$(DEVKITPRO)/libnx/switch.specs
+    LIBDIRS += -L$(DEVKITPRO)/libnx/lib -L$(DEVKITPRO)/portlibs/switch/lib -specs=/opt/devkitpro/libnx/switch.specs
 else ifeq ($(PLATFORM),$(filter $(PLATFORM),DINGOO GCW))
     COMPILERFLAGS += -D__OPENDINGUX__
 else ifeq ($(PLATFORM),SKYOS)
@@ -615,8 +637,7 @@ ifndef OPTOPT
                 OPTOPT += -mtune=generic
                 # -mstackrealign
             endif
-            OPTOPT += -mmmx
-            # -msse2 -mfpmath=sse,387 -malign-double
+            OPTOPT += -mmmx -msse -msse2 -mfpmath=sse
         endif
     endif
     ifeq ($(PLATFORM),WII)
@@ -744,12 +765,33 @@ W_GCC_4_1 := -Wno-attributes
 W_GCC_4_2 := $(W_STRICT_OVERFLOW)
 W_GCC_4_4 := -Wno-unused-result
 W_GCC_4_5 := -Wlogical-op -Wcast-qual
+W_GCC_6 := -Wduplicated-cond -Wnull-dereference
+W_GCC_7 := -Wduplicated-branches
+W_GCC_8 := -Warray-bounds=2
+W_GCC_9 := -Wmultistatement-macros
 W_CLANG := -Wno-unused-value -Wno-parentheses -Wno-unknown-warning-option
 
 ifeq (0,$(CLANG))
     W_CLANG :=
 
+    ifneq (,$(filter 4 5 6 7 8,$(GCC_MAJOR)))
+        W_GCC_9 :=
+        ifneq (,$(filter 4 5 6 7,$(GCC_MAJOR)))
+            W_GCC_8 :=
+            ifneq (,$(filter 4 5 6,$(GCC_MAJOR)))
+                W_GCC_7 :=
+                ifneq (,$(filter 4 5,$(GCC_MAJOR)))
+                    W_GCC_6 :=
+                endif
+            endif     
+        endif
+    endif
+
     ifeq (0,$(GCC_PREREQ_4))
+        W_GCC_9 :=
+        W_GCC_8 :=
+        W_GCC_7 :=
+        W_GCC_6 :=
         W_GCC_4_5 :=
         W_GCC_4_4 :=
         ifeq (0,$(OPTLEVEL))
@@ -791,6 +833,9 @@ CWARNS := -W -Wall \
     $(W_GCC_4_2) \
     $(W_GCC_4_4) \
     $(W_GCC_4_5) \
+    $(W_GCC_6) \
+    $(W_GCC_7) \
+    $(W_GCC_8) \
     $(W_CLANG) \
     #-Wstrict-prototypes \
     #-Waggregate-return \
@@ -910,9 +955,13 @@ ifeq ($(RENDERTYPE),SDL)
         endif
     endif
 
+    ifeq ($(PLATFORM), WINDOWS)
+        SDLCONFIG :=
+    endif
+
     ifeq ($(PLATFORM),WII)
         SDLCONFIG :=
-	else ifeq ($(PLATFORM),SWITCH)
+    else ifeq ($(PLATFORM),SWITCH)
         SDLCONFIG := $(DEVKITPRO)/portlibs/switch/bin/sdl2-config
     else ifeq ($(PLATFORM),SKYOS)
         COMPILERFLAGS += -I/boot/programs/sdk/include/sdl
@@ -977,8 +1026,10 @@ ifeq ($(PLATFORM),WINDOWS)
     LIBS += -lmingwex -lgdi32 -lpthread
     ifeq ($(RENDERTYPE),WIN)
         LIBS += -ldxguid
+    else ifeq ($(SDL_TARGET),1)
+        LIBS += -ldxguid -lmingw32 -limm32 -lole32 -loleaut32 -lversion
     else
-        LIBS += -ldxguid_sdl -lmingw32 -limm32 -lole32 -loleaut32 -lversion
+        LIBS += -ldxguid_sdl -lmingw32 -limm32 -lole32 -loleaut32 -lversion -lsetupapi
     endif
     LIBS += -lcomctl32 -lwinmm $(L_SSP) -lwsock32 -lws2_32 -lshlwapi
     # -lshfolder

@@ -1,3 +1,10 @@
+// "Build Engine & Tools" Copyright (c) 1993-1997 Ken Silverman
+// Ken Silverman's official web site: "http://www.advsys.net/ken"
+// See the included license file "BUILDLIC.TXT" for license info.
+//
+// This file has been modified from Ken Silverman's original release
+// by Jonathon Fowler (jf@jonof.id.au)
+// by the EDuke32 team (development@voidpoint.com)
 
 #include "compat.h"
 #include "build.h"
@@ -5,6 +12,9 @@
 #include "engine_priv.h"
 #include "cache1d.h"
 #include "lz4.h"
+#include "crc32.h"
+
+#include "vfs.h"
 
 void *pic = NULL;
 
@@ -20,7 +30,10 @@ static int32_t tilefileoffs[MAXTILES];
 // necessary (have per-map ART files).
 static uint8_t *g_bakTileFileNum;
 static int32_t *g_bakTileFileOffs;
-static vec2s_t *g_bakTileSiz;
+static vec2_16_t *g_bakTileSiz;
+static char *g_bakPicSiz;
+static char *g_bakWalock;
+static intptr_t *g_bakWaloff;
 static picanm_t *g_bakPicAnm;
 static char * g_bakFakeTile;
 static char ** g_bakFakeTileData;
@@ -32,7 +45,8 @@ static int32_t cachesize = 0;
 static char artfilename[20];
 static char mapartfilename[BMAX_PATH];  // map-specific ART file name
 static int32_t mapartfnXXofs;  // byte offset to 'XX' (the number part) in the above
-static int32_t artfil = -1, artfilnum, artfilplc;
+static int32_t artfilnum, artfilplc;
+static buildvfs_kfd artfil;
 
 ////////// Per-map ART file loading //////////
 
@@ -79,7 +93,7 @@ void artClearMapArt(void)
     {
         kclose(artfil);
 
-        artfil = -1;
+        artfil = buildvfs_kfd_invalid;
         artfilnum = -1;
         artfilplc = 0L;
     }
@@ -98,6 +112,9 @@ void artClearMapArt(void)
     RESTORE_MAPART_ARRAY(tilefilenum, g_bakTileFileNum);
     RESTORE_MAPART_ARRAY(tilefileoffs, g_bakTileFileOffs);
     RESTORE_MAPART_ARRAY(tilesiz, g_bakTileSiz);
+    RESTORE_MAPART_ARRAY(picsiz, g_bakPicSiz);
+    RESTORE_MAPART_ARRAY(walock, g_bakWalock);
+    RESTORE_MAPART_ARRAY(waloff, g_bakWaloff);
     RESTORE_MAPART_ARRAY(picanm, g_bakPicAnm);
     RESTORE_MAPART_ARRAY(faketile, g_bakFakeTile);
 
@@ -134,9 +151,9 @@ void artSetupMapArt(const char *filename)
     mapartfnXXofs = Bstrlen(mapartfilename) - 6;
 
     // Check for first per-map ART file: if that one doesn't exist, don't load any.
-    int32_t fil = kopen4load(artGetIndexedFileName(MAXARTFILES_BASE), 0);
+    buildvfs_kfd fil = kopen4load(artGetIndexedFileName(MAXARTFILES_BASE), 0);
 
-    if (fil == -1)
+    if (fil == buildvfs_kfd_invalid)
     {
         artClearMapArtFilename();
         return;
@@ -148,6 +165,9 @@ void artSetupMapArt(const char *filename)
     ALLOC_MAPART_ARRAY(tilefilenum, g_bakTileFileNum);
     ALLOC_MAPART_ARRAY(tilefileoffs, g_bakTileFileOffs);
     ALLOC_MAPART_ARRAY(tilesiz, g_bakTileSiz);
+    ALLOC_MAPART_ARRAY(picsiz, g_bakPicSiz);
+    ALLOC_MAPART_ARRAY(walock, g_bakWalock);
+    ALLOC_MAPART_ARRAY(waloff, g_bakWaloff);
     ALLOC_MAPART_ARRAY(picanm, g_bakPicAnm);
     ALLOC_MAPART_ARRAY(faketile, g_bakFakeTile);
     ALLOC_MAPART_ARRAY(faketiledata, g_bakFakeTileData);
@@ -277,10 +297,26 @@ void tileSetSize(int32_t picnum, int16_t dasizx, int16_t dasizy)
     tileUpdatePicSiz(picnum);
 }
 
-int32_t artReadHeader(int32_t const fil, char const * const fn, artheader_t * const local)
+int32_t artReadHeader(buildvfs_kfd const fil, char const * const fn, artheader_t * const local)
 {
     int32_t artversion;
     kread(fil, &artversion, 4); artversion = B_LITTLE32(artversion);
+
+    if (artversion == B_LITTLE32(0x4c495542))
+    {
+        kread(fil, &artversion, 4); artversion = B_LITTLE32(artversion);
+        if (artversion == B_LITTLE32(0x54524144))
+        {
+            kread(fil, &artversion, 4); artversion = B_LITTLE32(artversion);
+        }
+        else
+        {
+            initprintf("loadpics: Invalid art file, %s\n", fn);
+            kclose(fil);
+            return 1;
+        }
+    }
+
     if (artversion != 1)
     {
         initprintf("loadpics: Invalid art file version in %s\n", fn);
@@ -371,7 +407,7 @@ void tileConvertAnimFormat(int32_t const picnum)
     thispicanm->sf &= ~PICANM_MISC_MASK;
 }
 
-void artReadManifest(int32_t const fil, artheader_t const * const local)
+void artReadManifest(buildvfs_kfd const fil, artheader_t const * const local)
 {
     int16_t *tilesizx = (int16_t *) Xmalloc(local->numtiles * sizeof(int16_t));
     int16_t *tilesizy = (int16_t *) Xmalloc(local->numtiles * sizeof(int16_t));
@@ -391,7 +427,7 @@ void artReadManifest(int32_t const fil, artheader_t const * const local)
     DO_FREE_AND_NULL(tilesizy);
 }
 
-void artPreloadFile(int32_t const fil, artheader_t const * const local)
+void artPreloadFile(buildvfs_kfd const fil, artheader_t const * const local)
 {
     char *buffer = NULL;
     int32_t buffersize = 0;
@@ -414,7 +450,7 @@ void artPreloadFile(int32_t const fil, artheader_t const * const local)
     DO_FREE_AND_NULL(buffer);
 }
 
-static void artPreloadFileSafe(int32_t const fil, artheader_t const * const local)
+static void artPreloadFileSafe(buildvfs_kfd const fil, artheader_t const * const local)
 {
     char *buffer = NULL;
     int32_t buffersize = 0;
@@ -468,9 +504,9 @@ static int32_t artReadIndexedFile(int32_t tilefilei)
 {
     const char *fn = artGetIndexedFileName(tilefilei);
     const int32_t permap = (tilefilei >= MAXARTFILES_BASE);  // is it a per-map ART file?
-    int32_t fil;
+    buildvfs_kfd fil;
 
-    if ((fil = kopen4load(fn, 0)) != -1)
+    if ((fil = kopen4load(fn, 0)) != buildvfs_kfd_invalid)
     {
         artheader_t local;
         int const headerval = artReadHeader(fil, fn, &local);
@@ -504,7 +540,11 @@ static int32_t artReadIndexedFile(int32_t tilefilei)
 
         artReadManifest(fil, &local);
 
+#ifndef USE_PHYSFS
         if (cache1d_file_fromzip(fil))
+#else
+        if (1)
+#endif
         {
             if (permap)
                 artPreloadFileSafe(fil, &local);
@@ -545,12 +585,15 @@ int32_t artLoadFiles(const char *filename, int32_t askedsize)
 {
     Bstrncpyz(artfilename, filename, sizeof(artfilename));
 
-    Bmemset(&tilesiz[0], 0, sizeof(vec2s_t) * MAXTILES);
+    Bmemset(&tilesiz[0], 0, sizeof(vec2_16_t) * MAXTILES);
     Bmemset(picanm, 0, sizeof(picanm));
+
+    for (auto &rot : rottile)
+        rot = { -1, -1 };
 
     //    artsize = 0;
 
-    for (bssize_t tilefilei=0; tilefilei<MAXARTFILES_BASE; tilefilei++)
+    for (int tilefilei=0; tilefilei<MAXARTFILES_BASE; tilefilei++)
         artReadIndexedFile(tilefilei);
 
     Bmemset(gotpic, 0, sizeof(gotpic));
@@ -562,7 +605,7 @@ int32_t artLoadFiles(const char *filename, int32_t askedsize)
 
     artUpdateManifest();
 
-    artfil = -1;
+    artfil = buildvfs_kfd_invalid;
     artfilnum = -1;
     artfilplc = 0L;
 
@@ -591,12 +634,14 @@ bool tileLoad(int16_t tileNum)
     tileLoadData(tileNum, dasiz, (char *) waloff[tileNum]);
 
 #ifdef USE_OPENGL
-    if (videoGetRenderMode() >= REND_POLYMOST)
+    if (videoGetRenderMode() >= REND_POLYMOST &&
+        in3dmode())
     {
         //POGOTODO: this type stuff won't be necessary down the line -- review this
         int type;
         for (type = 0; type <= 1; ++type)
         {
+            gltexinvalidate(tileNum, 0, (type ? DAMETH_CLAMPED : DAMETH_MASK) | PTH_INDEXED);
             texcache_fetch(tileNum, 0, 0, (type ? DAMETH_CLAMPED : DAMETH_MASK) | PTH_INDEXED);
         }
     }
@@ -607,10 +652,45 @@ bool tileLoad(int16_t tileNum)
     return (waloff[tileNum] != 0 && tilesiz[tileNum].x > 0 && tilesiz[tileNum].y > 0);
 }
 
+void tileMaybeRotate(int16_t tilenume)
+{
+    auto &rot = rottile[tilenume];
+    auto &siz = tilesiz[rot.owner];
+
+    auto src = (char *)waloff[rot.owner];
+    auto dst = (char *)waloff[tilenume];
+
+    // the engine has a squarerotatetile() we could call, but it mirrors at the same time
+    for (int x = 0; x < siz.x; ++x)
+    {
+        int const xofs = siz.x - x - 1;
+        int const yofs = siz.y * x;
+
+        for (int y = 0; y < siz.y; ++y)
+            *(dst + y * siz.x + xofs) = *(src + y + yofs);
+    }
+
+    tileSetSize(tilenume, siz.y, siz.x);
+}
+
 void tileLoadData(int16_t tilenume, int32_t dasiz, char *buffer)
 {
-    // dummy tiles for highres replacements and tilefromtexture definitions
+    int const owner = rottile[tilenume].owner;
 
+    if (owner != -1)
+    {
+        if (!waloff[owner])
+            tileLoad(owner);
+
+        if (waloff[tilenume])
+            tileMaybeRotate(tilenume);
+
+        return;
+    }
+
+    int const tfn = tilefilenum[tilenume];
+
+    // dummy tiles for highres replacements and tilefromtexture definitions
     if (faketile[tilenume>>3] & pow2char[tilenume&7])
     {
         if (faketiledata[tilenume] != NULL)
@@ -620,19 +700,17 @@ void tileLoadData(int16_t tilenume, int32_t dasiz, char *buffer)
         return;
     }
 
-    int const tfn = tilefilenum[tilenume];
-
     // Potentially switch open ART file.
     if (tfn != artfilnum)
     {
-        if (artfil != -1)
+        if (artfil != buildvfs_kfd_invalid)
             kclose(artfil);
 
         char const *fn = artGetIndexedFileName(tfn);
 
         artfil = kopen4load(fn, 0);
 
-        if (artfil == -1)
+        if (artfil == buildvfs_kfd_invalid)
         {
             initprintf("Failed opening ART file \"%s\"!\n", fn);
             engineUnInit();
@@ -689,6 +767,26 @@ static void tilePostLoad(int16_t tilenume)
         picanm[tilenume].yofs = 12;
     }
 #endif
+}
+
+int32_t tileCRC(int16_t tileNum)
+{
+    char *data;
+
+    if ((unsigned)tileNum >= (unsigned)MAXTILES)
+        return 0;
+    int const dasiz = tilesiz[tileNum].x * tilesiz[tileNum].y;
+    if (dasiz <= 0)
+        return 0;
+
+    data = (char *)Xmalloc(dasiz);
+    tileLoadData(tileNum, dasiz, data);
+
+    int32_t crc = Bcrc32((unsigned char *)data, (unsigned int)dasiz, 0);
+
+    Xfree(data);
+
+    return crc;
 }
 
 // Assumes pic has been initialized to zero.
@@ -777,7 +875,7 @@ void tileCopySection(int32_t tilenume1, int32_t sx1, int32_t sy1, int32_t xsiz, 
 
 void Buninitart(void)
 {
-    if (artfil != -1)
+    if (artfil != buildvfs_kfd_invalid)
         kclose(artfil);
 
     ALIGNED_FREE_AND_NULL(pic);

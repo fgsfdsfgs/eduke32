@@ -8,6 +8,8 @@
 
 #include "common.h"
 
+#include "vfs.h"
+
 void PrintBuildInfo(void)
 {
     buildprint(
@@ -64,7 +66,7 @@ char *g_defNamePtr = NULL;
 
 void clearDefNamePtr(void)
 {
-    Bfree(g_defNamePtr);
+    Xfree(g_defNamePtr);
     // g_defNamePtr assumed to be assigned to right after
 }
 
@@ -129,15 +131,18 @@ int32_t G_CheckCmdSwitch(int32_t argc, char const * const * argv, const char *st
 // returns: 1 if file could be opened, 0 else
 int32_t testkopen(const char *filename, char searchfirst)
 {
-    int32_t fd = kopen4load(filename, searchfirst);
-    if (fd >= 0)
+    buildvfs_kfd fd = kopen4load(filename, searchfirst);
+    if (fd != buildvfs_kfd_invalid)
         kclose(fd);
-    return (fd >= 0);
+    return (fd != buildvfs_kfd_invalid);
 }
 
 // checks from path and in ZIPs, returns 1 if NOT found
 int32_t check_file_exist(const char *fn)
 {
+#ifdef USE_PHYSFS
+    return !PHYSFS_exists(fn);
+#else
     int32_t opsm = pathsearchmode;
     char *tfn;
 
@@ -155,10 +160,11 @@ int32_t check_file_exist(const char *fn)
             return 1;
         }
     }
-    else Bfree(tfn);
+    else Xfree(tfn);
     pathsearchmode = opsm;
 
     return 0;
+#endif
 }
 
 
@@ -215,15 +221,15 @@ int32_t maybe_append_ext(char *wbuf, int32_t wbufsiz, const char *fn, const char
 
 int32_t ldist(const void *s1, const void *s2)
 {
-    vec2_t const *const sp1 = (vec2_t const *)s1;
-    vec2_t const *const sp2 = (vec2_t const *)s2;
+    auto sp1 = (vec2_t const *)s1;
+    auto sp2 = (vec2_t const *)s2;
     return sepldist(sp1->x - sp2->x, sp1->y - sp2->y);
 }
 
 int32_t dist(const void *s1, const void *s2)
 {
-    vec3_t const *const sp1 = (vec3_t const *)s1;
-    vec3_t const *const sp2 = (vec3_t const *)s2;
+    auto sp1 = (vec3_t const *)s1;
+    auto sp2 = (vec3_t const *)s2;
     return sepdist(sp1->x - sp2->x, sp1->y - sp2->y, sp1->z - sp2->z);
 }
 
@@ -239,7 +245,7 @@ int32_t FindDistance3D(int32_t x, int32_t y, int32_t z)
 
 
 // Clear OSD background
-void COMMON_clearbackground(int32_t numcols, int32_t numrows)
+void COMMON_clearbackground(int numcols, int numrows)
 {
     UNREFERENCED_PARAMETER(numcols);
 

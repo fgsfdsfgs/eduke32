@@ -191,7 +191,7 @@ typedef struct
     int32_t mdnum; //VOX=1, MD2=2, MD3=3. NOTE: must be first in structure!
     int32_t shadeoff;
     float scale, bscale, zadd;
-    uint32_t *texid;    // skins for palettes
+    uint32_t *texid, texid8bit;    // skins for palettes
     int32_t flags;
 
     //VOX specific stuff:
@@ -200,25 +200,31 @@ typedef struct
     vec3_t siz;
     vec3f_t piv;
     int32_t is8bit;
+    GLuint vbo, vboindex;
 } voxmodel_t;
 
 EXTERN mdmodel_t **models;
 
-void updateanimation(md2model_t *m, const uspritetype *tspr, uint8_t lpal);
+void updateanimation(md2model_t *m, tspriteptr_t tspr, uint8_t lpal);
 int32_t mdloadskin(md2model_t *m, int32_t number, int32_t pal, int32_t surf);
 void mdinit(void);
 void freeallmodels(void);
 void clearskins(int32_t type);
-int32_t polymost_mddraw(const uspritetype *tspr);
-EXTERN void md3_vox_calcmat_common(const uspritetype *tspr, const vec3f_t *a0, float f, float mat[16]);
+int32_t polymost_mddraw(tspriteptr_t tspr);
+EXTERN void md3_vox_calcmat_common(tspriteptr_t tspr, const vec3f_t *a0, float f, float mat[16]);
 
 EXTERN int32_t mdpause;
 EXTERN int32_t nextmodelid;
 EXTERN voxmodel_t *voxmodels[MAXVOXELS];
 
+#ifdef USE_GLEXT
+void voxvboalloc(voxmodel_t *vm);
+void voxvbofree(voxmodel_t *vm);
+#endif
+
 void voxfree(voxmodel_t *m);
 voxmodel_t *voxload(const char *filnam);
-int32_t polymost_voxdraw(voxmodel_t *m, const uspritetype *tspr);
+int32_t polymost_voxdraw(voxmodel_t *m, tspriteptr_t const tspr);
 
 int      md3postload_polymer(md3model_t* m);
 //int32_t md_thinoutmodel(int32_t modelid, uint8_t *usedframebitmap);

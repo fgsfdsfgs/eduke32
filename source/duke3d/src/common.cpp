@@ -9,6 +9,8 @@
 
 #include "grpscan.h"
 
+#include "vfs.h"
+
 #ifdef _WIN32
 # define NEED_SHLWAPI_H
 # include "windows_inc.h"
@@ -53,13 +55,13 @@ char *g_rtsNamePtr = NULL;
 
 void clearGrpNamePtr(void)
 {
-    Bfree(g_grpNamePtr);
+    Xfree(g_grpNamePtr);
     // g_grpNamePtr assumed to be assigned to right after
 }
 
 void clearScriptNamePtr(void)
 {
-    Bfree(g_scriptNamePtr);
+    Xfree(g_scriptNamePtr);
     // g_scriptNamePtr assumed to be assigned to right after
 }
 
@@ -221,7 +223,7 @@ void G_SetupGlobalPsky(void)
 
     // NOTE: Loop must be running backwards for the same behavior as the game
     // (greatest sector index with matching parallaxed sky takes precedence).
-    for (bssize_t i = numsectors - 1; i >= 0; i--)
+    for (int i = numsectors - 1; i >= 0; i--)
     {
         if (sector[i].ceilingstat & 1)
         {
@@ -239,9 +241,9 @@ void G_SetupGlobalPsky(void)
 static char g_rootDir[BMAX_PATH];
 char g_modDir[BMAX_PATH] = "/";
 
-int kopen4loadfrommod(const char *fileName, char searchfirst)
+buildvfs_kfd kopen4loadfrommod(const char *fileName, char searchfirst)
 {
-    int kFile = -1;
+    buildvfs_kfd kFile = buildvfs_kfd_invalid;
 
     if (g_modDir[0] != '/' || g_modDir[1] != 0)
     {
@@ -250,7 +252,7 @@ int kopen4loadfrommod(const char *fileName, char searchfirst)
         kFile = kopen4load(staticFileName, searchfirst);
     }
 
-    return (kFile < 0) ? kopen4load(fileName, searchfirst) : kFile;
+    return (kFile == buildvfs_kfd_invalid) ? kopen4load(fileName, searchfirst) : kFile;
 }
 
 int g_useCwd;
@@ -264,9 +266,9 @@ void G_ExtPreInit(int32_t argc,char const * const * argv)
 #ifdef _WIN32
     GetModuleFileName(NULL,g_rootDir,BMAX_PATH);
     Bcorrectfilename(g_rootDir,1);
-    //chdir(g_rootDir);
+    //buildvfs_chdir(g_rootDir);
 #else
-    getcwd(g_rootDir,BMAX_PATH);
+    buildvfs_getcwd(g_rootDir,BMAX_PATH);
     strcat(g_rootDir,"/");
 #endif
 }
@@ -278,10 +280,15 @@ void G_ExtInit(void)
 #ifdef EDUKE32_OSX
     char *appdir = Bgetappdir();
     addsearchpath(appdir);
-    Bfree(appdir);
+    Xfree(appdir);
 #endif
 
-    if (getcwd(cwd,BMAX_PATH) && Bstrcmp(cwd,"/") != 0)
+#ifdef USE_PHYSFS
+    strncpy(cwd, PHYSFS_getBaseDir(), ARRAY_SIZE(cwd));
+    cwd[ARRAY_SIZE(cwd)-1] = '\0';
+#else
+    if (buildvfs_getcwd(cwd, ARRAY_SIZE(cwd)) && Bstrcmp(cwd, "/") != 0)
+#endif
         addsearchpath(cwd);
 
     if (CommandPaths)
@@ -298,16 +305,16 @@ void G_ExtInit(void)
                            i==-1 ? "not a directory" : "no such directory");
             }
 
-            Bfree(CommandPaths->str);
-            Bfree(CommandPaths);
+            Xfree(CommandPaths->str);
+            Xfree(CommandPaths);
             CommandPaths = s;
         }
     }
 
 #if defined(_WIN32) && !defined(EDUKE32_STANDALONE)
-    if (!access("user_profiles_enabled", F_OK))
+    if (buildvfs_exists("user_profiles_enabled"))
 #else
-    if (g_useCwd == 0 && access("user_profiles_disabled", F_OK))
+    if (g_useCwd == 0 && !buildvfs_exists("user_profiles_disabled"))
 #endif
     {
         char *homedir;
@@ -315,7 +322,7 @@ void G_ExtInit(void)
 
         if ((homedir = Bgethomedir()))
         {
-            Bsnprintf(cwd,sizeof(cwd),"%s/"
+            Bsnprintf(cwd, ARRAY_SIZE(cwd), "%s/"
 #if defined(_WIN32)
                       APPNAME
 #elif defined(GEKKO)
@@ -327,12 +334,12 @@ void G_ExtInit(void)
             asperr = addsearchpath(cwd);
             if (asperr == -2)
             {
-                if (Bmkdir(cwd,S_IRWXU) == 0) asperr = addsearchpath(cwd);
+                if (buildvfs_mkdir(cwd,S_IRWXU) == 0) asperr = addsearchpath(cwd);
                 else asperr = -1;
             }
             if (asperr == 0)
-                Bchdir(cwd);
-            Bfree(homedir);
+                buildvfs_chdir(cwd);
+            Xfree(homedir);
         }
     }
 
@@ -410,20 +417,22 @@ void G_LoadGroups(int32_t autoload)
         addsearchpath(g_rootDir);
         //        addsearchpath(mod_dir);
 
-        if (getcwd(cwd, BMAX_PATH))
+        char path[BMAX_PATH];
+
+        if (buildvfs_getcwd(cwd, BMAX_PATH))
         {
-            Bsprintf(cwd, "%s/%s", cwd, g_modDir);
-            if (!Bstrcmp(g_rootDir, cwd))
+            Bsnprintf(path, sizeof(path), "%s/%s", cwd, g_modDir);
+            if (!Bstrcmp(g_rootDir, path))
             {
-                if (addsearchpath(cwd) == -2)
-                    if (Bmkdir(cwd, S_IRWXU) == 0)
-                        addsearchpath(cwd);
+                if (addsearchpath(path) == -2)
+                    if (buildvfs_mkdir(path, S_IRWXU) == 0)
+                        addsearchpath(path);
             }
         }
 
 #ifdef USE_OPENGL
-        Bsprintf(cwd, "%s/%s", g_modDir, TEXCACHEFILE);
-        Bstrcpy(TEXCACHEFILE, cwd);
+        Bsnprintf(path, sizeof(path), "%s/%s", g_modDir, TEXCACHEFILE);
+        Bstrcpy(TEXCACHEFILE, path);
 #endif
     }
 
@@ -452,10 +461,7 @@ void G_LoadGroups(int32_t autoload)
             g_defNamePtr = dup_filename(type->defname);
 
         if (type->rtsname && g_rtsNamePtr == NULL)
-        {
-            free(g_rtsNamePtr);
             g_rtsNamePtr = dup_filename(type->rtsname);
-        }
     }
     else
     {
@@ -510,8 +516,8 @@ void G_LoadGroups(int32_t autoload)
                 G_DoAutoload(CommandGrps->str);
         }
 
-        Bfree(CommandGrps->str);
-        Bfree(CommandGrps);
+        Xfree(CommandGrps->str);
+        Xfree(CommandGrps);
         CommandGrps = s;
     }
     pathsearchmode = bakpathsearchmode;
@@ -523,10 +529,10 @@ static int G_ReadRegistryValue(char const * const SubKey, char const * const Val
     // KEY_WOW64_32KEY gets us around Wow6432Node on 64-bit builds
     REGSAM const wow64keys[] = { KEY_WOW64_32KEY, KEY_WOW64_64KEY };
 
-    for (size_t k = 0; k < ARRAY_SIZE(wow64keys); ++k)
+    for (auto &wow64key : wow64keys)
     {
         HKEY hkey;
-        LONG keygood = RegOpenKeyEx(HKEY_LOCAL_MACHINE, NULL, 0, KEY_READ | wow64keys[k], &hkey);
+        LONG keygood = RegOpenKeyEx(HKEY_LOCAL_MACHINE, NULL, 0, KEY_READ | wow64key, &hkey);
 
         if (keygood != ERROR_SUCCESS)
             continue;
@@ -750,16 +756,16 @@ static char* KeyValues_FindKeyValue(char **vdfbuf, char * const vdfbufend, const
 
 static void G_ParseSteamKeyValuesForPaths(const char *vdf)
 {
-    int32_t fd = Bopen(vdf, BO_RDONLY);
-    int32_t size = Bfilelength(fd);
+    buildvfs_fd fd = buildvfs_open_read(vdf);
+    int32_t size = buildvfs_length(fd);
     char *vdfbufstart, *vdfbuf, *vdfbufend;
 
     if (size <= 0)
         return;
 
-    vdfbufstart = vdfbuf = (char*)Bmalloc(size);
-    size = (int32_t)Bread(fd, vdfbuf, size);
-    Bclose(fd);
+    vdfbufstart = vdfbuf = (char*)Xmalloc(size);
+    size = (int32_t)buildvfs_read(fd, vdfbuf, size);
+    buildvfs_close(fd);
     vdfbufend = vdfbuf + size;
 
     if (KeyValues_FindParentKey(&vdfbuf, vdfbufend, "LibraryFolders"))
@@ -770,7 +776,7 @@ static void G_ParseSteamKeyValuesForPaths(const char *vdf)
             G_AddSteamPaths(result);
     }
 
-    Bfree(vdfbufstart);
+    Xfree(vdfbufstart);
 }
 #endif
 #endif
@@ -790,7 +796,7 @@ void G_AddSearchPaths(void)
     Bsnprintf(buf, sizeof(buf), "%s/.steam/steam/steamapps/libraryfolders.vdf", homepath);
     G_ParseSteamKeyValuesForPaths(buf);
 
-    Bfree(homepath);
+    Xfree(homepath);
 
     addsearchpath("/usr/share/games/jfduke3d");
     addsearchpath("/usr/local/share/games/jfduke3d");
@@ -825,8 +831,8 @@ void G_AddSearchPaths(void)
 
     for (i = 0; i < 2; i++)
     {
-        Bfree(applications[i]);
-        Bfree(support[i]);
+        Xfree(applications[i]);
+        Xfree(support[i]);
     }
 #elif defined (_WIN32)
     char buf[BMAX_PATH] = {0};
@@ -834,14 +840,14 @@ void G_AddSearchPaths(void)
 
     // Duke Nukem 3D: 20th Anniversary World Tour (Steam)
     bufsize = sizeof(buf);
-    if (G_ReadRegistryValue("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 434050", "InstallLocation", buf, &bufsize))
+    if (G_ReadRegistryValue(R"(SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 434050)", "InstallLocation", buf, &bufsize))
     {
         addsearchpath_user(buf, SEARCHPATH_REMOVE);
     }
 
     // Duke Nukem 3D: Megaton Edition (Steam)
     bufsize = sizeof(buf);
-    if (G_ReadRegistryValue("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 225140", "InstallLocation", buf, &bufsize))
+    if (G_ReadRegistryValue(R"(SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 225140)", "InstallLocation", buf, &bufsize))
     {
         char * const suffix = buf + bufsize - 1;
         DWORD const remaining = sizeof(buf) - bufsize;
@@ -858,7 +864,7 @@ void G_AddSearchPaths(void)
 
     // Duke Nukem 3D (3D Realms Anthology (Steam) / Kill-A-Ton Collection 2015)
     bufsize = sizeof(buf);
-    if (G_ReadRegistryValue("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 359850", "InstallLocation", buf, &bufsize))
+    if (G_ReadRegistryValue(R"(SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 359850)", "InstallLocation", buf, &bufsize))
     {
         char * const suffix = buf + bufsize - 1;
         DWORD const remaining = sizeof(buf) - bufsize;
@@ -898,7 +904,7 @@ void G_AddSearchPaths(void)
 
     // NAM (Steam)
     bufsize = sizeof(buf);
-    if (G_ReadRegistryValue("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 329650", "InstallLocation", buf, &bufsize))
+    if (G_ReadRegistryValue(R"(SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 329650)", "InstallLocation", buf, &bufsize))
     {
         char * const suffix = buf + bufsize - 1;
         DWORD const remaining = sizeof(buf) - bufsize;
@@ -909,7 +915,7 @@ void G_AddSearchPaths(void)
 
     // WWII GI (Steam)
     bufsize = sizeof(buf);
-    if (G_ReadRegistryValue("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam App 376750", "InstallLocation", buf, &bufsize))
+    if (G_ReadRegistryValue(R"(SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 376750)", "InstallLocation", buf, &bufsize))
     {
         char * const suffix = buf + bufsize - 1;
         DWORD const remaining = sizeof(buf) - bufsize;
@@ -998,11 +1004,11 @@ void G_LoadGroupsInDir(const char *dirname)
     char buf[BMAX_PATH];
     fnlist_t fnlist = FNLIST_INITIALIZER;
 
-    for (unsigned i=0; i<(sizeof(extensions)/sizeof(extensions[0])); i++)
+    for (auto & extension : extensions)
     {
         CACHE1D_FIND_REC *rec;
 
-        fnlist_getnames(&fnlist, dirname, extensions[i], -1, 0);
+        fnlist_getnames(&fnlist, dirname, extension, -1, 0);
 
         for (rec=fnlist.findfiles; rec; rec=rec->next)
         {
@@ -1027,10 +1033,11 @@ void G_DoAutoload(const char *dirname)
 
 void G_LoadLookups(void)
 {
-    int32_t fp, j;
+    int32_t j;
+    buildvfs_kfd fp;
 
-    if ((fp=kopen4loadfrommod("lookup.dat",0)) == -1)
-        if ((fp=kopen4loadfrommod("lookup.dat",1)) == -1)
+    if ((fp=kopen4loadfrommod("lookup.dat",0)) == buildvfs_kfd_invalid)
+        if ((fp=kopen4loadfrommod("lookup.dat",1)) == buildvfs_kfd_invalid)
             return;
 
     j = paletteLoadLookupTable(fp);
@@ -1053,8 +1060,8 @@ void G_LoadLookups(void)
         if (kread_and_test(fp, paldata, 768))
             return kclose(fp);
 
-        for (bssize_t k = 0; k < 768; k++)
-            paldata[k] <<= 2;
+        for (unsigned char & k : paldata)
+            k <<= 2;
 
         paletteSetColorTable(basepalnum, paldata);
     }
@@ -1066,13 +1073,13 @@ void G_LoadLookups(void)
 
 #ifdef FORMAT_UPGRADE_ELIGIBLE
 
-static int32_t S_TryFormats(char * const testfn, char * const fn_suffix, char const searchfirst)
+static buildvfs_kfd S_TryFormats(char * const testfn, char * const fn_suffix, char const searchfirst)
 {
 #ifdef HAVE_FLAC
     {
         Bstrcpy(fn_suffix, ".flac");
-        int32_t const fp = kopen4loadfrommod(testfn, searchfirst);
-        if (fp >= 0)
+        buildvfs_kfd const fp = kopen4loadfrommod(testfn, searchfirst);
+        if (fp != buildvfs_kfd_invalid)
             return fp;
     }
 #endif
@@ -1080,16 +1087,16 @@ static int32_t S_TryFormats(char * const testfn, char * const fn_suffix, char co
 #ifdef HAVE_VORBIS
     {
         Bstrcpy(fn_suffix, ".ogg");
-        int32_t const fp = kopen4loadfrommod(testfn, searchfirst);
-        if (fp >= 0)
+        buildvfs_kfd const fp = kopen4loadfrommod(testfn, searchfirst);
+        if (fp != buildvfs_kfd_invalid)
             return fp;
     }
 #endif
 
-    return -1;
+    return buildvfs_kfd_invalid;
 }
 
-static int32_t S_TryExtensionReplacements(char * const testfn, char const searchfirst, uint8_t const ismusic)
+static buildvfs_kfd S_TryExtensionReplacements(char * const testfn, char const searchfirst, uint8_t const ismusic)
 {
     char * extension = Bstrrchr(testfn, '.');
     char * const fn_end = Bstrchr(testfn, '\0');
@@ -1099,8 +1106,8 @@ static int32_t S_TryExtensionReplacements(char * const testfn, char const search
     {
         *extension = '_';
 
-        int32_t const fp = S_TryFormats(testfn, fn_end, searchfirst);
-        if (fp >= 0)
+        buildvfs_kfd const fp = S_TryFormats(testfn, fn_end, searchfirst);
+        if (fp != buildvfs_kfd_invalid)
             return fp;
     }
     else
@@ -1111,68 +1118,63 @@ static int32_t S_TryExtensionReplacements(char * const testfn, char const search
     // ex: grabbag.mid --> grabbag.*
     if (ismusic)
     {
-        int32_t const fp = S_TryFormats(testfn, extension, searchfirst);
-        if (fp >= 0)
+        buildvfs_kfd const fp = S_TryFormats(testfn, extension, searchfirst);
+        if (fp != buildvfs_kfd_invalid)
             return fp;
     }
 
-    return -1;
+    return buildvfs_kfd_invalid;
 }
 
-int32_t S_OpenAudio(const char *fn, char searchfirst, uint8_t const ismusic)
+buildvfs_kfd S_OpenAudio(const char *fn, char searchfirst, uint8_t const ismusic)
 {
-    int32_t const origfp = kopen4loadfrommod(fn, searchfirst);
-    char const * const origparent = origfp != -1 ? kfileparent(origfp) : NULL;
-    uint32_t const origparentlength = origparent != NULL ? Bstrlen(origparent) : 0;
+    buildvfs_kfd const origfp      = kopen4loadfrommod(fn, searchfirst);
+#ifndef USE_PHYSFS
+    char const * const origparent  = origfp != buildvfs_kfd_invalid ? kfileparent(origfp) : NULL;
+    uint32_t const    parentlength = origparent != NULL ? Bstrlen(origparent) : 0;
 
-    char * const testfn = (char *)Xmalloc(Bstrlen(fn) + 12 + origparentlength); // "music/" + overestimation of parent minus extension + ".flac" + '\0'
+    auto testfn = (char *)Xmalloc(Bstrlen(fn) + 12 + parentlength); // "music/" + overestimation of parent minus extension + ".flac" + '\0'
+#else
+    auto testfn = (char *)Xmalloc(Bstrlen(fn) + 12);
+#endif
 
     // look in ./
     // ex: ./grabbag.mid
-    {
-        Bstrcpy(testfn, fn);
-        int32_t const fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
-        if (fp >= 0)
-        {
-            Bfree(testfn);
-            kclose(origfp);
-            return fp;
-        }
-    }
+    Bstrcpy(testfn, fn);
+    buildvfs_kfd fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
+    if (fp != buildvfs_kfd_invalid)
+        goto success;
 
+#ifndef USE_PHYSFS
     // look in ./music/<file's parent GRP name>/
     // ex: ./music/duke3d/grabbag.mid
     // ex: ./music/nwinter/grabbag.mid
     if (origparent != NULL)
     {
-        char const * const origparentextension = Bstrrchr(origparent, '.');
-        uint32_t namelength = origparentextension != NULL ? (unsigned)(origparentextension - origparent) : origparentlength;
+        char const * const parentextension = Bstrrchr(origparent, '.');
+        uint32_t const namelength = parentextension != NULL ? (unsigned)(parentextension - origparent) : parentlength;
 
         Bsprintf(testfn, "music/%.*s/%s", namelength, origparent, fn);
-        int32_t const fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
-        if (fp >= 0)
-        {
-            Bfree(testfn);
-            kclose(origfp);
-            return fp;
-        }
+        fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
+        if (fp != buildvfs_kfd_invalid)
+            goto success;
     }
 
     // look in ./music/
     // ex: ./music/grabbag.mid
-    {
-        Bsprintf(testfn, "music/%s", fn);
-        int32_t const fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
-        if (fp >= 0)
-        {
-            Bfree(testfn);
-            kclose(origfp);
-            return fp;
-        }
-    }
+    Bsprintf(testfn, "music/%s", fn);
+    fp = S_TryExtensionReplacements(testfn, searchfirst, ismusic);
+    if (fp != buildvfs_kfd_invalid)
+        goto success;
+#endif
 
-    Bfree(testfn);
+    Xfree(testfn);
     return origfp;
+
+success:
+    Xfree(testfn);
+    kclose(origfp);
+    return fp;
 }
 
 void Duke_CommonCleanup(void)

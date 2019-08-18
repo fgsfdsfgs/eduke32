@@ -233,7 +233,8 @@ FLAC__StreamDecoderWriteStatus write_flac_stream(const FLAC__StreamDecoder *deco
                       (FLAC__uint64)(uintptr_t)voice->LoopStart, (FLAC__uint64)(uintptr_t)voice->LoopEnd);
     }
 
-    voice->length = ((samples * (voice->bits / 8)) / 2) << voice->bits;
+    size_t const size = samples * voice->channels * (voice->bits / 8);
+
     voice->position = 0;
     voice->BlockLength = 0;
     // CODEDUP multivoc.c MV_SetVoicePitch
@@ -241,22 +242,18 @@ FLAC__StreamDecoderWriteStatus write_flac_stream(const FLAC__StreamDecoder *deco
     voice->FixedPointBufferSize = (voice->RateScale * MV_MIXBUFFERSIZE) - voice->RateScale;
     MV_SetVoiceMixMode(voice);
 
+    char * block = fd->block;
+
+    if (size > fd->blocksize)
     {
-        const size_t size = samples * voice->channels * (voice->bits / 8);
-        if (size > fd->blocksize)
-        {
-            fd->blocksize = size;
-            fd->block = (char *)realloc(fd->block, sizeof(char) * size);
-        }
+        block = (char *)Xmalloc(size);
+
+        if (block == nullptr)
+            return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
 
-    if (!fd->block)
-        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-
-    voice->sound = fd->block;
-
     {
-        char *obuffer = fd->block;
+        char *obuffer = block;
         FLAC__uint64 sample;
         uint8_t channel;
 
@@ -272,6 +269,17 @@ FLAC__StreamDecoderWriteStatus write_flac_stream(const FLAC__StreamDecoder *deco
                     val = -(1 << (voice->bits - 1));
                 for (byte = 0; byte < voice->bits; byte += 8) *obuffer++ = ((val >> byte) & 0x000000FF);
             }
+    }
+
+    voice->sound = block;
+    voice->length = samples << 16;
+
+    if (block != fd->block)
+    {
+        char * oldblock = fd->block;
+        fd->block = block;
+        fd->blocksize = size;
+        Xfree(oldblock);
     }
 
     return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
@@ -316,8 +324,6 @@ static playbackstatus MV_GetNextFLACBlock(VoiceNode *voice)
     FLAC__StreamDecoderState decode_state;
     // FLAC__bool decode_status;
 
-    voice->Playing = TRUE;
-
     if ((FLAC__uint64)(uintptr_t)voice->LoopEnd > 0 && fd->sample_pos >= (FLAC__uint64)(uintptr_t)voice->LoopEnd)
         if (!FLAC__stream_decoder_seek_absolute(fd->stream, (FLAC__uint64)(uintptr_t)voice->LoopStart))
             MV_Printf("MV_GetNextFLACBlock FLAC__stream_decoder_seek_absolute: LOOP_START %ul, LOOP_END %ul\n",
@@ -330,7 +336,6 @@ static playbackstatus MV_GetNextFLACBlock(VoiceNode *voice)
         if (!decode_status)
         {
             MV_Printf("MV_GetNextFLACBlock: %s\n", FLAC__StreamDecoderStateString[decode_state]);
-            voice->Playing = FALSE;
             return NoMoreData;
         }
     */
@@ -350,10 +355,7 @@ static playbackstatus MV_GetNextFLACBlock(VoiceNode *voice)
                           (FLAC__uint64)(uintptr_t)voice->LoopStart);
         }
         else
-        {
-            voice->Playing = FALSE;
             return NoMoreData;
-        }
     }
 
 #if 0
@@ -378,14 +380,12 @@ Begin playback of sound data at specified angle and distance
 from listener.
 ---------------------------------------------------------------------*/
 
-int32_t MV_PlayFLAC3D(char *ptr, uint32_t ptrlength, int32_t loophow, int32_t pitchoffset, int32_t angle,
-                      int32_t distance, int32_t priority, uint32_t callbackval)
-
+int32_t MV_PlayFLAC3D(char *ptr, uint32_t length, int32_t loophow, int32_t pitchoffset, int32_t angle, int32_t distance, int32_t priority, float volume, uint32_t callbackval)
 {
     int32_t left;
     int32_t right;
     int32_t mid;
-    int32_t volume;
+    int32_t vol;
     int32_t status;
 
     if (!MV_Installed)
@@ -400,16 +400,16 @@ int32_t MV_PlayFLAC3D(char *ptr, uint32_t ptrlength, int32_t loophow, int32_t pi
         angle += MV_NUMPANPOSITIONS / 2;
     }
 
-    volume = MIX_VOLUME(distance);
+    vol = MIX_VOLUME(distance);
 
     // Ensure angle is within 0 - 127
     angle &= MV_MAXPANPOSITION;
 
-    left = MV_PanTable[angle][volume].left;
-    right = MV_PanTable[angle][volume].right;
+    left = MV_PanTable[angle][vol].left;
+    right = MV_PanTable[angle][vol].right;
     mid = max(0, 255 - distance);
 
-    status = MV_PlayFLAC(ptr, ptrlength, loophow, -1, pitchoffset, mid, left, right, priority, callbackval);
+    status = MV_PlayFLAC(ptr, length, loophow, -1, pitchoffset, mid, left, right, priority, volume, callbackval);
 
     return status;
 }
@@ -422,9 +422,7 @@ Begin playback of sound data with the given sound levels and
 priority.
 ---------------------------------------------------------------------*/
 
-int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t loopend, int32_t pitchoffset, int32_t vol,
-                    int32_t left, int32_t right, int32_t priority, uint32_t callbackval)
-
+int32_t MV_PlayFLAC(char *ptr, uint32_t length, int32_t loopstart, int32_t loopend, int32_t pitchoffset, int32_t vol, int32_t left, int32_t right, int32_t priority, float volume, uint32_t callbackval)
 {
     VoiceNode *voice;
     flac_data *fd = 0;
@@ -438,7 +436,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
         return MV_Error;
     }
 
-    fd = (flac_data *)calloc(1, sizeof(flac_data));
+    fd = (flac_data *)Xcalloc(1, sizeof(flac_data));
     if (!fd)
     {
         MV_SetErrorCode(MV_InvalidFile);
@@ -448,7 +446,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
     fd->ptr = ptr;
     fd->pos = 0;
     fd->blocksize = 0;
-    fd->length = ptrlength;
+    fd->length = length;
 
     fd->block = NULL;
 
@@ -462,7 +460,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
                                          /*metadata_flac_stream*/ NULL, error_flac_stream,
                                          (void *)fd) != FLAC__STREAM_DECODER_INIT_STATUS_OK)
     {
-        free(fd);
+        Xfree(fd);
         MV_Printf("MV_PlayFLAC: %s\n", FLAC__stream_decoder_get_resolved_state_string(fd->stream));
         MV_SetErrorCode(MV_InvalidFile);
         return MV_Error;
@@ -474,7 +472,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
     {
         FLAC__stream_decoder_finish(fd->stream);
         FLAC__stream_decoder_delete(fd->stream);
-        free(fd);
+        Xfree(fd);
         MV_SetErrorCode(MV_NoVoices);
         return MV_Error;
     }
@@ -493,7 +491,6 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
     voice->priority = priority;
     voice->callbackval = callbackval;
 
-    voice->Playing = TRUE;
     voice->Paused = FALSE;
 
     voice->LoopStart = 0;
@@ -535,7 +532,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
                             // FLAC__metadata_chain_delete(metadata_chain);
                             FLAC__stream_decoder_finish(fd->stream);
                             FLAC__stream_decoder_delete(fd->stream);
-                            free(fd);
+                            Xfree(fd);
                             MV_SetErrorCode(MV_InvalidFile);
                             return MV_Error;
                         }
@@ -558,25 +555,25 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
                                 const size_t field = value - entry;
                                 value += 1;
 
-                                for (size_t t = 0; t < loopStartTagCount && vc_loopstart == NULL; ++t)
+                                for (int t = 0; t < loopStartTagCount && vc_loopstart == NULL; ++t)
                                 {
                                     char const * const tag = loopStartTags[t];
                                     if (field == strlen(tag) && Bstrncasecmp(entry, tag, field) == 0)
-                                        vc_loopstart = strdup(value);
+                                        vc_loopstart = Xstrdup(value);
                                 }
 
-                                for (size_t t = 0; t < loopEndTagCount && vc_loopend == NULL; ++t)
+                                for (int t = 0; t < loopEndTagCount && vc_loopend == NULL; ++t)
                                 {
                                     char const * const tag = loopEndTags[t];
                                     if (field == strlen(tag) && Bstrncasecmp(entry, tag, field) == 0)
-                                        vc_loopend = strdup(value);
+                                        vc_loopend = Xstrdup(value);
                                 }
 
-                                for (size_t t = 0; t < loopLengthTagCount && vc_looplength == NULL; ++t)
+                                for (int t = 0; t < loopLengthTagCount && vc_looplength == NULL; ++t)
                                 {
                                     char const * const tag = loopLengthTags[t];
                                     if (field == strlen(tag) && Bstrncasecmp(entry, tag, field) == 0)
-                                        vc_looplength = strdup(value);
+                                        vc_looplength = Xstrdup(value);
                                 }
                             }
                         }
@@ -638,7 +635,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
     voice->FixedPointBufferSize = (voice->RateScale * MV_MIXBUFFERSIZE) - voice->RateScale;
     MV_SetVoiceMixMode(voice);
 
-    MV_SetVoiceVolume(voice, vol, left, right);
+    MV_SetVoiceVolume(voice, vol, left, right, volume);
     MV_PlayVoice(voice);
 
     return voice->handle;
@@ -654,21 +651,26 @@ void MV_ReleaseFLACVoice(VoiceNode *voice)
         return;
     }
 
+    voice->rawdataptr = 0;
     if (fd->stream != NULL)
     {
-        FLAC__stream_decoder_finish(fd->stream);
-        FLAC__stream_decoder_delete(fd->stream);
+    auto stream = fd->stream;
+    fd->stream = nullptr;
+        FLAC__stream_decoder_finish(stream);
+        FLAC__stream_decoder_delete(stream);
     }
-    free(fd->block);
-    free(fd);
-
-    voice->rawdataptr = 0;
+    auto block = fd->block;
+    voice->length = 0;
+    voice->sound = nullptr;
+    fd->block = nullptr;
+    Xfree(block);
+    Xfree(fd);
 }
 #else
 #include "_multivc.h"
 
 int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t loopend, int32_t pitchoffset,
-    int32_t vol, int32_t left, int32_t right, int32_t priority, uint32_t callbackval)
+    int32_t vol, int32_t left, int32_t right, int32_t priority, float volume, uint32_t callbackval)
 {
     UNREFERENCED_PARAMETER(ptr);
     UNREFERENCED_PARAMETER(ptrlength);
@@ -679,6 +681,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
     UNREFERENCED_PARAMETER(left);
     UNREFERENCED_PARAMETER(right);
     UNREFERENCED_PARAMETER(priority);
+    UNREFERENCED_PARAMETER(volume);
     UNREFERENCED_PARAMETER(callbackval);
 
     MV_Printf("MV_PlayFLAC: FLAC support not included in this binary.\n");
@@ -686,7 +689,7 @@ int32_t MV_PlayFLAC(char *ptr, uint32_t ptrlength, int32_t loopstart, int32_t lo
 }
 
 int32_t MV_PlayFLAC3D(char *ptr, uint32_t ptrlength, int32_t loophow, int32_t pitchoffset, int32_t angle,
-    int32_t distance, int32_t priority, uint32_t callbackval)
+    int32_t distance, int32_t priority, float volume, uint32_t callbackval)
 {
     UNREFERENCED_PARAMETER(ptr);
     UNREFERENCED_PARAMETER(ptrlength);
@@ -695,6 +698,7 @@ int32_t MV_PlayFLAC3D(char *ptr, uint32_t ptrlength, int32_t loophow, int32_t pi
     UNREFERENCED_PARAMETER(angle);
     UNREFERENCED_PARAMETER(distance);
     UNREFERENCED_PARAMETER(priority);
+    UNREFERENCED_PARAMETER(volume);
     UNREFERENCED_PARAMETER(callbackval);
 
     MV_Printf("MV_PlayFLAC: FLAC support not included in this binary.\n");

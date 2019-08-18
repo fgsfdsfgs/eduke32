@@ -7,10 +7,10 @@
 #ifndef EDUKE32_COMMON_H_
 #define EDUKE32_COMMON_H_
 
-#include "compat.h"
-#include "scriptfile.h"
 #include "cache1d.h"
+#include "compat.h"
 #include "pragmas.h"  // klabs
+#include "scriptfile.h"
 
 
 #ifdef __cplusplus
@@ -97,7 +97,7 @@ void fnlist_clearnames(fnlist_t *fnl);
 int32_t fnlist_getnames(fnlist_t *fnl, const char *dirname, const char *pattern,
                         int32_t dirflags, int32_t fileflags);
 
-char *dup_filename(const char *fn);
+
 int32_t maybe_append_ext(char *wbuf, int32_t wbufsiz, const char *fn, const char *ext);
 
 // Approximations to 2D and 3D Euclidean distances. Initial EDuke32 SVN import says

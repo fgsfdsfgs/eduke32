@@ -46,7 +46,7 @@ char gamefunctions[NUMGAMEFUNCTIONS][MAXGAMEFUNCLEN] =
    "Fire",
    "Open",
    "Run",
-   "AutoRun",
+   "Alt_Fire",
    "Jump",
    "Crouch",
    "Look_Up",
@@ -110,13 +110,16 @@ char gamefunctions[NUMGAMEFUNCTIONS][MAXGAMEFUNCLEN] =
 #endif
    "Dpad_Select",
    "Dpad_Aiming",
-   "Alternate_Weapon",
+   "AutoRun",
    "Last_Used_Weapon",
+   "Quick_Save",
+   "Quick_Load",
+   "Alt_Weapon",
+   "Third_Person_View",
+   "Crouch_Toggle",
    };
 
 #ifdef __SETUP__
-
-#define NUMKEYENTRIES 58
 
 const char keydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    {
@@ -125,12 +128,12 @@ const char keydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "Left", "Kpad4",
    "Right", "KPad6",
    "LAlt", "RAlt",
-   "", "RCtrl",
+   "RCtrl", "",
    "E", "",
    "LShift", "RShift",
-   "CapLck", "",
+   "", "",
    "Space", "/",
-   "LCtrl", "",
+   "LCtrl", "C",
    "PgUp", "Kpad9",
    "PgDn", "Kpad3",
    "Insert", "Kpad0",
@@ -166,8 +169,8 @@ const char keydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "Y", "",
    "F", "",
    "K", "",
-   "U", "",
-   "I", "",
+   "", "",
+   "", "",
    "R", "",
    "Q", "",
    "'", "",
@@ -176,7 +179,12 @@ const char keydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "", "",
    "", "",
    "", "",
+   "CapLck", "",
+   "X", "",
+   "F6", "",
+   "F9", "",
    "", "",
+   "F7", "",
    "", "",
    };
 
@@ -190,7 +198,7 @@ const char oldkeydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "LCtrl", "RCtrl",
    "Space", "",
    "LShift", "RShift",
-   "CapLck", "",
+   "", "",
    "A", "/",
    "Z", "",
    "PgUp", "Kpad9",
@@ -238,14 +246,19 @@ const char oldkeydefaults[NUMGAMEFUNCTIONS*2][MAXGAMEFUNCLEN] =
    "", "",
    "", "",
    "", "",
+   "CapLck", "",
    "", "",
+   "F6", "",
+   "F9", "",
+   "", "",
+   "F7", "",
    "", "",
    };
 
 static const char * mousedefaults[MAXMOUSEBUTTONS] =
    {
    "Fire",
-   "MedKit",
+   "Alt_Fire",
    "Jetpack",
    "",
    "Previous_Weapon",
@@ -260,7 +273,7 @@ static const char * mouseclickeddefaults[MAXMOUSEBUTTONS] =
 
 static const char * mouseanalogdefaults[MAXMOUSEAXES] =
    {
-   "analog_turning",
+   "analog_strafing",
    "analog_moving",
    };
 
@@ -269,7 +282,7 @@ static const char * mousedigitaldefaults[MAXMOUSEDIGITAL] =
    {
    };
 
-#if defined(GEKKO)
+#if defined GEKKO
 static const char * joystickdefaults[MAXJOYBUTTONSANDHATS] =
    {
    "Open", // A
@@ -323,127 +336,6 @@ static const char * joystickanalogdefaults[MAXJOYAXES] =
 
 static const char * joystickdigitaldefaults[MAXJOYDIGITAL] =
    {
-   };
-#elif __SWITCH__
-static const char * joystickdefaults[MAXJOYBUTTONSANDHATS] =
-   {
-   "Open",				// KEY_A
-   "Jump",				// KEY_B
-   "Inventory_Left", 	// KEY_X
-   "Inventory_Right", 	// KEY_Y
-   "Run",				// KEY_LSTICK
-   "Crouch",			// KEY_RSTICK
-   "Previous_Weapon", 	// KEY_L
-   "Next_Weapon", 		// KEY_R
-   "Quick_Kick",		// KEY_ZL
-   "Fire", 				// KEY_ZR
-   "",
-   "Map", 				// KEY_MINUS
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   };
-
-static const char * joystickclickeddefaults[MAXJOYBUTTONSANDHATS] =
-   {
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   };
-
-static const char * joystickanalogdefaults[MAXJOYAXES] =
-   {
-   "analog_strafing",
-   "analog_moving",
-   "analog_turning",
-   "analog_lookingupanddown",
-   };
-
-static const char * joystickdigitaldefaults[MAXJOYDIGITAL] =
-   {
-   };
-#else
-static const char * joystickdefaults[MAXJOYBUTTONSANDHATS] =
-   {
-   "Fire",
-   "Strafe",
-   "Run",
-   "Open",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "Aim_Down",
-   "Look_Right",
-   "Aim_Up",
-   "Look_Left",
-   };
-
-
-static const char * joystickclickeddefaults[MAXJOYBUTTONSANDHATS] =
-   {
-   "",
-   "Inventory",
-   "Jump",
-   "Crouch",
-   };
-
-
-static const char * joystickanalogdefaults[MAXJOYAXES] =
-   {
-   "analog_turning",
-   "analog_moving",
-   "analog_strafing",
-   };
-
-
-static const char * joystickdigitaldefaults[MAXJOYDIGITAL] =
-   {
-   "",
-   "",
-   "",
-   "",
-   "",
-   "",
-   "Run",
    };
 #endif
 

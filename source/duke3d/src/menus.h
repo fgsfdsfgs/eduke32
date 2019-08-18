@@ -44,6 +44,8 @@ enum MenuIndex_t {
     MENU_MAIN_INGAME    = 50,
     MENU_EPISODE        = 100,
     MENU_USERMAP        = 101,
+    MENU_NEWGAMECUSTOM  = 102,
+    MENU_NEWGAMECUSTOMSUB = 103,
     MENU_SKILL          = 110,
     MENU_GAMESETUP      = 200,
     MENU_OPTIONS        = 202,
@@ -60,12 +62,12 @@ enum MenuIndex_t {
     MENU_TOUCHSETUP     = 214,
     MENU_TOUCHSENS      = 215,
     MENU_TOUCHBUTTONS   = 216,
-	MENU_CONTROLS       = 220,
+    MENU_CONTROLS       = 220,
     MENU_POLYMOST       = 230,
     MENU_COLCORR        = 231,
     MENU_COLCORR_INGAME = 232,
-	MENU_SCREENSETUP    = 233,
-	MENU_DISPLAYSETUP   = 234,
+    MENU_SCREENSETUP    = 233,
+    MENU_DISPLAYSETUP   = 234,
     MENU_POLYMER        = 240,
     MENU_LOAD           = 300,
     MENU_SAVE           = 350,
@@ -79,7 +81,7 @@ enum MenuIndex_t {
     MENU_NETWAITVOTES   = 603,
     MENU_SOUND          = 700,
     MENU_SOUND_INGAME   = 701,
-	MENU_ADVSOUND       = 702,
+    MENU_ADVSOUND       = 702,
     MENU_SAVESETUP      = 750,
     MENU_SAVECLEANVERIFY = 751,
     MENU_CHEATS         = 800,
@@ -96,6 +98,12 @@ enum MenuIndex_t {
     MENU_NEWVERIFY      = 1500,
     MENU_SAVEVERIFY     = 2000,
     MENU_SAVEDELVERIFY  = 2100,
+    MENU_COLCORRRESETVERIFY = 2200,
+    MENU_KEYSRESETVERIFY = 2201,
+    MENU_KEYSCLASSICVERIFY = 2202,
+    MENU_JOYSTANDARDVERIFY = 2203,
+    MENU_JOYPROVERIFY   = 2204,
+    MENU_JOYCLEARVERIFY = 2205,
     MENU_ADULTPASSWORD  = 10001,
     MENU_RESETPLAYER    = 15000,
     MENU_BUYDUKE        = 20000,
@@ -413,6 +421,7 @@ typedef struct MenuFileSelect_t
     MenuFont_t *font[2];
 
     // traits
+    const char * startdir;
     const char *pattern;
     char *destination;
 
@@ -458,13 +467,13 @@ extern Menu_t *m_currentMenu;
 
 extern int32_t g_quitDeadline;
 extern int32_t voting;
-int Menu_Change(int32_t cm);
+int Menu_Change(MenuID_t cm);
 void Menu_AnimateChange(int32_t cm, MenuAnimationType_t animtype);
 int32_t Menu_IsTextInput(Menu_t *cm);
-void G_CheckPlayerColor(int32_t *color,int32_t prev_color);
+int G_CheckPlayerColor(int color);
 void Menu_Init(void);
-void Menu_Open(size_t playerID);
-void Menu_Close(size_t playerID);
+void Menu_Open(uint8_t playerID);
+void Menu_Close(uint8_t playerID);
 void M_DisplayMenus(void);
 
 extern MenuFont_t MF_Redfont, MF_Bluefont, MF_Minifont;
@@ -486,9 +495,37 @@ extern int32_t m_mousewake_watchpoint, m_menuchange_watchpoint;
 # define CURSORALPHA (MOUSEUSEALPHA ? clamp((totalclock - m_mouselastactivity - 90)*2 + (255/3), (255/3), 255) : 255/3)
 # define MOUSEACTIVECONDITION (totalclock - m_mouselastactivity < M_MOUSETIMEOUT)
 # define MOUSEACTIVECONDITIONAL(condition) (MOUSEACTIVECONDITION && (condition))
-# define MOUSEINACTIVECONDITIONAL(condition) (!MOUSEACTIVECONDITION && (condition))
+# define MOUSEINACTIVECONDITIONAL(condition) ((!(g_player[myconnectindex].ps->gm & MODE_MENU) || !MOUSEACTIVECONDITION) && (condition))
 # define MOUSEWATCHPOINTCONDITIONAL(condition) ((condition) || m_mousewake_watchpoint || m_menuchange_watchpoint == 3)
 #endif
+
+#define MAXMENUGAMEPLAYENTRIES 7
+
+enum MenuGameplayEntryFlags
+{
+    MGE_Locked = 1u<<0u,
+    MGE_Hidden = 1u<<1u,
+    MGE_UserContent = 1u<<2u,
+};
+
+typedef struct MenuGameplayEntry
+{
+    char name[64];
+    uint8_t flags;
+
+    bool isValid() const { return name[0] != '\0'; }
+} MenuGameplayEntry;
+
+typedef struct MenuGameplayStemEntry
+{
+    MenuGameplayEntry entry;
+    MenuGameplayEntry subentries[MAXMENUGAMEPLAYENTRIES];
+} MenuGameplayStemEntry;
+
+extern MenuGameplayStemEntry g_MenuGameplayEntries[MAXMENUGAMEPLAYENTRIES];
+
+extern MenuEntry_t ME_NEWGAMECUSTOMENTRIES[MAXMENUGAMEPLAYENTRIES];
+extern MenuEntry_t ME_NEWGAMECUSTOMSUBENTRIES[MAXMENUGAMEPLAYENTRIES][MAXMENUGAMEPLAYENTRIES];
 
 #ifdef __cplusplus
 }
