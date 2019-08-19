@@ -341,10 +341,34 @@ static void sighandler(int signum)
 }
 #endif
 
-#if defined __SWITCH__ && !defined NDEBUG
+#if defined __SWITCH__
+# ifndef NDEBUG
 static int nxlink_sock = -1;
 static int nxsock_init = 0;
-#endif
+# endif
+extern "C" void userAppInit(void)
+{
+# ifndef NDEBUG
+    if (R_SUCCEEDED(socketInitializeDefault()))
+    {
+        nxlink_sock = nxlinkStdio();
+        nxsock_init = 1;
+    }
+# endif
+}
+extern "C" void userAppExit(void)
+{
+    uninitsystem();
+# ifndef NDEBUG
+    if (nxsock_init)
+    {
+        if (nxlink_sock >= 0)
+            close(nxlink_sock);
+        socketExit();
+    }
+# endif
+}
+#endif // __SWITCH__
 
 #ifdef __ANDROID__
 int mobile_halted = 0;
@@ -600,17 +624,6 @@ int32_t initsystem(void)
 
     mutex_init(&m_initprintf);
 
-#if defined __SWITCH__
-# if !defined NDEBUG
-    if (R_SUCCEEDED(socketInitializeDefault()))
-    {
-        nxlink_sock = nxlinkStdio();
-        nxsock_init = 1;
-    }
-# endif
-    appletLockExit();
-#endif
-
 #ifdef _WIN32
     win_init();
 #endif
@@ -638,7 +651,9 @@ int32_t initsystem(void)
     SDL_StopTextInput();
 #endif
 
+#ifndef __SWITCH__ // called in userAppExit instead
     atexit(uninitsystem);
+#endif
 
     frameplace = 0;
     lockcount = 0;
@@ -701,22 +716,6 @@ void uninitsystem(void)
 # ifdef POLYMER
     unloadglulibrary();
 # endif
-#endif
-
-#if defined __SWITCH__
-# if !defined NDEBUG
-    if (nxsock_init)
-    {
-        nxsock_init = 0;
-        if (nxlink_sock >= 0)
-        {
-            close(nxlink_sock);
-            nxlink_sock = -1;
-        }
-        socketExit();
-    }
-# endif
-    appletUnlockExit();
 #endif
 }
 
@@ -1297,6 +1296,7 @@ void videoGetModes(void)
 
     SDL_CHECKFSMODES(maxx, maxy);
 
+#ifndef __SWITCH__ // no windowed modes here
     // add windowed modes next
     // SDL sorts display modes largest to smallest, so we can just compare with mode 0
     // to make sure we aren't adding modes that are larger than the actual screen res
@@ -1319,6 +1319,7 @@ void videoGetModes(void)
         SDL_ADDMODE(mode.x, mode.y, 32, 0);
 #endif
     }
+#endif // __SWITCH__
 
     qsort((void *)validmode, validmodecnt, sizeof(struct validmode_t), &sortmodes);
 
@@ -1638,6 +1639,7 @@ void setrefreshrate(void)
     currentVBlankInterval = timerGetFreqU64()/(double)newmode.refresh_rate;
 }
 
+
 int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 {
     int32_t regrab = 0, ret;
@@ -1653,15 +1655,33 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
     }
 
     // deinit
+#ifndef __SWITCH__ // HACK: see below
     destroy_window_resources();
+#endif
 
     initprintf("Setting video mode %dx%d (%d-bpp %s)\n", x, y, c, ((fs & 1) ? "fullscreen" : "windowed"));
 
+#ifdef __SWITCH__
+    int const windowedMode = 0;
+    fs = 0;
+#else
     SDL_DisplayMode desktopmode;
     SDL_GetDesktopDisplayMode(0, &desktopmode);
 
     int const windowedMode = (desktopmode.w == x && desktopmode.h == y) ? SDL_WINDOW_BORDERLESS : 0;
+#endif
 
+#ifdef __SWITCH__
+    // HACK:
+    // cannot recreate the window on the switch 'cause something in switch-sdl2
+    // does not free properly, so just resize it instead
+    if (sdl_window)
+    {
+        SDL_SetWindowSize(sdl_window, x, y);
+        setrefreshrate();
+    }
+    else
+#endif // __SWITCH__
 #ifdef USE_OPENGL
     if (c > 8 || !nogl)
     {
@@ -1694,7 +1714,7 @@ int32_t videoSetMode(int32_t x, int32_t y, int32_t c, int32_t fs)
 #endif
               { SDL_GL_STENCIL_SIZE, 1 },
               { SDL_GL_ACCELERATED_VISUAL, 1 },
-          };
+        };
 
         do
         {
@@ -1898,6 +1918,9 @@ void videoShowFrame(int32_t w)
         }
         else
         {
+#ifdef __SWITCH__ // if we don't do this, viewport is stuck at 1080p
+            glViewport(0, 0, xres, yres);
+#endif
             glsurface_blitBuffer();
         }
 
