@@ -46,7 +46,7 @@ const struct format_loader libxmp_loader_it = {
 #undef localtime_r
 #define localtime_r _localtime
 
-#elif !defined(HAVE_LOCALTIME_R) || defined(_WIN32)
+#elif (!defined(HAVE_LOCALTIME_R) || defined(_WIN32)) && !defined(__SWITCH__)
 #undef localtime_r
 struct tm *localtime_r(const time_t * timep, struct tm *result)
 {
