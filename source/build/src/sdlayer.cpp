@@ -422,7 +422,7 @@ int main(int argc, char *argv[])
     }
 #endif
 
-#if defined __SWITCH__
+#if !defined NDEBUG && defined __SWITCH__
     socketInitializeDefault();
     int sock = nxlinkStdio();
 #endif
@@ -520,7 +520,7 @@ int main(int argc, char *argv[])
     gtkbuild_exit(r);
 #endif
 
-#ifdef __SWITCH__
+#if !defined NDEBUG && defined __SWITCH__
     if (sock >= 0)
         close(sock);
     socketExit();
@@ -2004,7 +2004,9 @@ int32_t videoSetGamma(void)
 */
 #endif
 
+#ifndef __SWITCH__
         OSD_Printf("videoSetGamma(): %s\n", SDL_GetError());
+#endif
 
 #ifndef EDUKE32_GLES
 #if SDL_MAJOR_VERSION == 1
