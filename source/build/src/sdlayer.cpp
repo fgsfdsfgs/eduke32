@@ -348,6 +348,7 @@ static int nxsock_init = 0;
 # endif
 extern "C" void userAppInit(void)
 {
+    appletLockExit();
 # ifndef NDEBUG
     if (R_SUCCEEDED(socketInitializeDefault()))
     {
@@ -370,6 +371,7 @@ extern "C" void userAppExit(void)
         socketExit();
     }
 # endif
+    appletUnlockExit();
 }
 #endif // __SWITCH__
 
@@ -2288,6 +2290,10 @@ int32_t handleevents_sdlcommon(SDL_Event *ev)
             break;
 
         case SDL_QUIT:
+#ifdef __SWITCH__
+            Bexit(0); // bail right here: this is a termination request
+            // TODO: this is pretty shitty, maybe call G_GameQuit?
+#endif
             quitevent = 1;
             return -1;
     }
