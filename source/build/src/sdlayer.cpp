@@ -36,10 +36,8 @@
 # include <ogc/lwp_watchdog.h>
 #elif defined _WIN32
 # include "winbits.h"
-#endif
-
-#if defined __SWITCH__
-#include <switch.h>
+#elif defined __SWITCH__
+# include <switch.h>
 #endif
 
 #include "vfs.h"
@@ -343,6 +341,11 @@ static void sighandler(int signum)
 }
 #endif
 
+#if defined __SWITCH__ && !defined NDEBUG
+static int nxlink_sock = -1;
+static int nxsock_init = 0;
+#endif
+
 #ifdef __ANDROID__
 int mobile_halted = 0;
 #ifdef __cplusplus
@@ -420,11 +423,6 @@ int main(int argc, char *argv[])
     {
         return eduke32_return_value;
     }
-#endif
-
-#if !defined NDEBUG && defined __SWITCH__
-    socketInitializeDefault();
-    int sock = nxlinkStdio();
 #endif
 
 #if defined _WIN32 && defined SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING
@@ -520,11 +518,6 @@ int main(int argc, char *argv[])
     gtkbuild_exit(r);
 #endif
 
-#if !defined NDEBUG && defined __SWITCH__
-    if (sock >= 0)
-        close(sock);
-    socketExit();
-#endif
     return r;
 }
 
@@ -606,6 +599,17 @@ int32_t initsystem(void)
     const int sdlinitflags = SDL_INIT_VIDEO;
 
     mutex_init(&m_initprintf);
+
+#if defined __SWITCH__
+# if !defined NDEBUG
+    if (R_SUCCEEDED(socketInitializeDefault()))
+    {
+        nxlink_sock = nxlinkStdio();
+        nxsock_init = 1;
+    }
+# endif
+    appletLockExit();
+#endif
 
 #ifdef _WIN32
     win_init();
@@ -697,6 +701,22 @@ void uninitsystem(void)
 # ifdef POLYMER
     unloadglulibrary();
 # endif
+#endif
+
+#if defined __SWITCH__
+# if !defined NDEBUG
+    if (nxsock_init)
+    {
+        nxsock_init = 0;
+        if (nxlink_sock >= 0)
+        {
+            close(nxlink_sock);
+            nxlink_sock = -1;
+        }
+        socketExit();
+    }
+# endif
+    appletUnlockExit();
 #endif
 }
 
