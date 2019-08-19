@@ -601,7 +601,7 @@ else ifeq ($(PLATFORM),WII)
     COMPILERFLAGS += -DGEKKO -D__POWERPC__ -I$(LIBOGC_INC)
     LIBDIRS += -L$(LIBOGC_LIB)
 else ifeq ($(PLATFORM),SWITCH)
-    COMMONFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -ffast-math -ffunction-sections -fdata-sections
+    COMMONFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -mcpu=cortex-a57+crc+fp+simd -ffast-math -ffunction-sections -fdata-sections
     # LINKERFLAGS += -Wl,--gc-sections
     COMPILERFLAGS += -D__SWITCH__ -I$(DEVKITPRO)/libnx/include -I$(DEVKITPRO)/portlibs/switch/include
     LIBDIRS += -L$(DEVKITPRO)/libnx/lib -L$(DEVKITPRO)/portlibs/switch/lib -specs=/opt/devkitpro/libnx/switch.specs

@@ -303,7 +303,7 @@ ifeq ($(PLATFORM),WII)
     LINKERFLAGS += -Wl,-wrap,c_default_exceptionhandler
 endif
 ifeq ($(PLATFORM),SWITCH)
-    LIBS += -lvorbisfile -lvorbis -logg -lmpg123 -lmodplug -lFLAC -lopus -lopusfile -lm -lz
+    LIBS += -lvorbisfile -lvorbis -logg -lmpg123 -lmodplug -lFLAC -lopusfile -lopus -lm -lz
 endif
 ifeq ($(RENDERTYPE),SDL)
     engine_objs += sdlayer.cpp
