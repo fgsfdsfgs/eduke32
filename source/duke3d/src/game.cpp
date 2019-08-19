@@ -5764,7 +5764,9 @@ static void G_FreeHashAnim(const char * /*string*/, intptr_t key)
 
 static void G_Cleanup(void)
 {
+#ifndef __SWITCH__ // HACK: crashes here on exit?
     ReadSaveGameHeaders(); // for culling
+#endif
 
     int32_t i;
 

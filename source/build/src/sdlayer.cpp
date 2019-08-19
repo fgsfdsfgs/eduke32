@@ -359,6 +359,9 @@ extern "C" void userAppInit(void)
 extern "C" void userAppExit(void)
 {
     uninitsystem();
+    // have to do this manually for some reason
+    nvExit();
+    viExit();
 # ifndef NDEBUG
     if (nxsock_init)
     {
@@ -703,13 +706,19 @@ void uninitsystem(void)
         appicon = NULL;
     }
 
+#ifdef __SWITCH__
+    if (sdl_context)
+        SDL_GL_DeleteContext(sdl_context);
+    if (sdl_window)
+        SDL_DestroyWindow(sdl_window);
+#endif
     SDL_Quit();
 
 #ifdef _WIN32
     win_uninit();
 #endif
 
-#ifdef USE_OPENGL
+#if defined USE_OPENGL && !defined __SWITCH__
 # if SDL_MAJOR_VERSION!=1
     SDL_GL_UnloadLibrary();
 # endif
