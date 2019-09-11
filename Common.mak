@@ -348,8 +348,8 @@ endif
 #  LTO - 1 := enable link-time optimization
 
 # Optional overrides for text
-APPNAME :=
-APPBASENAME :=
+APPNAME ?=
+APPBASENAME ?=
 
 # Build toggles
 RELEASE := 1
@@ -360,18 +360,18 @@ MEMMAP := 0
 CPLUSPLUS := 1
 
 # Feature toggles
-STANDALONE := 0
-NETCODE := 1
-STARTUP_WINDOW := 1
-SIMPLE_MENU := 0
-POLYMER := 1
+STANDALONE ?= 0
+NETCODE ?= 1
+STARTUP_WINDOW ?= 1
+SIMPLE_MENU ?= 0
+POLYMER ?= 1
 USE_OPENGL := 1
 LUNATIC := 0
 USE_LUAJIT_2_1 := 0
 
 # Library toggles
 HAVE_GTK2 := 1
-USE_LIBVPX := 1
+USE_LIBVPX ?= 1
 HAVE_VORBIS := 1
 HAVE_FLAC := 1
 HAVE_XMP := 1
@@ -560,10 +560,13 @@ ifeq ($(PLATFORM),WINDOWS)
     ASFORMAT := win$(BITS)
     ASFLAGS += -DUNDERSCORES
 
+    DYNAMICBASE := ,--dynamicbase
+    LINKERFLAGS += -Wl,--enable-auto-import,--nxcompat$(DYNAMICBASE)
     ifneq ($(findstring x86_64,$(COMPILERTARGET)),x86_64)
         LINKERFLAGS += -Wl,--large-address-aware
+    else
+        LINKERFLAGS += -Wl,--high-entropy-va
     endif
-    LINKERFLAGS += -Wl,--enable-auto-import
 
     LUAJIT_BCOPTS := -o windows
     ifeq (32,$(BITS))
@@ -836,6 +839,7 @@ CWARNS := -W -Wall \
     $(W_GCC_6) \
     $(W_GCC_7) \
     $(W_GCC_8) \
+    $(W_GCC_9) \
     $(W_CLANG) \
     #-Wstrict-prototypes \
     #-Waggregate-return \
@@ -846,10 +850,10 @@ CWARNS := -W -Wall \
 ##### Features
 
 ifneq (,$(APPNAME))
-    COMPILERFLAGS += -DAPPNAME=\"$(APPNAME)\"
+    COMPILERFLAGS += "-DAPPNAME=\"$(APPNAME)\""
 endif
 ifneq (,$(APPBASENAME))
-    COMPILERFLAGS += -DAPPBASENAME=\"$(APPBASENAME)\"
+    COMPILERFLAGS += "-DAPPBASENAME=\"$(APPBASENAME)\""
 endif
 
 ifneq (0,$(NOASM))
