@@ -1,0 +1,19 @@
+--- source/build/src/sdlayer.cpp	2019-09-11 12:06:27.135784043 -0400
++++ source/build/src/sdlayer.cpp	2019-09-11 12:13:01.496065183 -0400
+@@ -1628,11 +1633,13 @@
+ 
+     initprintf("Setting video mode %dx%d (%d-bpp %s)\n", x, y, c, ((fs & 1) ? "fullscreen" : "windowed"));
+ 
+-    SDL_DisplayMode desktopmode;
+-    SDL_GetDesktopDisplayMode(0, &desktopmode);
++    int const display = r_displayindex < SDL_GetNumVideoDisplays() ? r_displayindex : 0;
+ 
+-    int const windowedMode = (desktopmode.w == x && desktopmode.h == y) ? SDL_WINDOW_BORDERLESS : 0;
++    SDL_DisplayMode desktopmode;
++    SDL_GetDesktopDisplayMode(display, &desktopmode);
+ 
++    int const matchedResolution = (desktopmode.w == x && desktopmode.h == y);
++    int const borderless = (r_borderless == 1 || (r_borderless == 2 && matchedResolution)) ? SDL_WINDOW_BORDERLESS : 0;
+ #ifdef USE_OPENGL
+     if (c > 8 || !nogl)
+     {

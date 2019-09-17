@@ -750,7 +750,7 @@ static int P_PostFireHitscan(int playerNum, int const spriteNum, hitdata_t *cons
 
 SKIPBULLETHOLE:
         HandleHitWall(hitData);
-        A_DamageWall(spriteNum, hitData->wall, &hitData->pos, wallDamage);
+        A_DamageWall(spriteNum, hitData->wall, hitData->pos, wallDamage);
     }
 
     return 0;
@@ -773,7 +773,7 @@ static int A_PostFireHitscan(const hitdata_t *hitData, int const spriteNum, int 
     }
     else if (hitData->wall >= 0)
     {
-        A_DamageWall(returnSprite, hitData->wall, &hitData->pos, wallDamage);
+        A_DamageWall(returnSprite, hitData->wall, hitData->pos, wallDamage);
         Proj_MaybeSpawn(returnSprite, spawnTile, hitData);
     }
     else
@@ -855,7 +855,7 @@ static void Proj_HandleKnee(hitdata_t *const hitData, int const spriteNum, int c
 
         if (wall[hitData->wall].picnum != ACCESSSWITCH && wall[hitData->wall].picnum != ACCESSSWITCH2)
         {
-            A_DamageWall(kneeSprite, hitData->wall, &hitData->pos, projecTile);
+            A_DamageWall(kneeSprite, hitData->wall, hitData->pos, projecTile);
             if (playerNum >= 0)
                 P_ActivateSwitch(playerNum, hitData->wall,0);
         }
@@ -1242,7 +1242,7 @@ static int32_t A_ShootHardcoded(int spriteNum, int projecTile, int shootAng, vec
             else if (hitData.sprite >= 0)
                 A_DamageObject(hitData.sprite, otherSprite);
             else if (hitData.wall >= 0 && wall[hitData.wall].picnum != ACCESSSWITCH && wall[hitData.wall].picnum != ACCESSSWITCH2)
-                A_DamageWall(otherSprite, hitData.wall, &hitData.pos, projecTile);
+                A_DamageWall(otherSprite, hitData.wall, hitData.pos, projecTile);
         }
         break;
 
@@ -2986,9 +2986,9 @@ void P_GetInput(int const playerNum)
     {
         static int32_t turnHeldTime   = 0;
         static int32_t lastInputClock = 0;  // MED
-        int32_t const  elapsedTics    = totalclock - lastInputClock;
+        int32_t const  elapsedTics    = (int32_t) totalclock - lastInputClock;
 
-        lastInputClock = totalclock;
+        lastInputClock = (int32_t) totalclock;
 
         if (BUTTON(gamefunc_Turn_Left))
         {
@@ -3033,7 +3033,6 @@ void P_GetInput(int const playerNum)
         }
     }
 
-
     if (BUTTON(gamefunc_Last_Weapon))
         weaponSelection = 14;
     else if (BUTTON(gamefunc_Alt_Weapon))
@@ -3046,10 +3045,25 @@ void P_GetInput(int const playerNum)
         weaponSelection = 0;
 
     localInput.bits = (weaponSelection << SK_WEAPON_BITS) | (BUTTON(gamefunc_Fire) << SK_FIRE);
-
     localInput.bits |= (BUTTON(gamefunc_Open) << SK_OPEN);
 
-    localInput.bits |= (BUTTON(gamefunc_Jump) << SK_JUMP) | (BUTTON(gamefunc_Crouch) << SK_CROUCH);
+    int const sectorLotag = pPlayer->cursectnum != -1 ? sector[pPlayer->cursectnum].lotag : 0;
+    int const crouchable = sectorLotag != 2 && (sectorLotag != 1 || pPlayer->spritebridge);
+
+    if (BUTTON(gamefunc_Toggle_Crouch))
+    {
+        pPlayer->crouch_toggle = !pPlayer->crouch_toggle && crouchable;
+
+        if (crouchable)
+            CONTROL_ClearButton(gamefunc_Toggle_Crouch);
+    }
+
+    if (BUTTON(gamefunc_Crouch) || BUTTON(gamefunc_Jump) || pPlayer->jetpack_on || (!crouchable && pPlayer->on_ground))
+        pPlayer->crouch_toggle = 0;
+
+    int const crouching = BUTTON(gamefunc_Crouch) || BUTTON(gamefunc_Toggle_Crouch) || pPlayer->crouch_toggle;
+
+    localInput.bits |= (BUTTON(gamefunc_Jump) << SK_JUMP) | (crouching << SK_CROUCH);
 
     localInput.bits |= (BUTTON(gamefunc_Aim_Up) || (BUTTON(gamefunc_Dpad_Aiming) && input.fvel > 0)) << SK_AIM_UP;
     localInput.bits |= (BUTTON(gamefunc_Aim_Down) || (BUTTON(gamefunc_Dpad_Aiming) && input.fvel < 0)) << SK_AIM_DOWN;
@@ -3525,7 +3539,7 @@ static void DoWallTouchDamage(const DukePlayer_t *pPlayer, int32_t wallNum)
     vec3_t const davect = { pPlayer->pos.x + (sintable[(fix16_to_int(pPlayer->q16ang) + 512) & 2047] >> 9),
                       pPlayer->pos.y + (sintable[fix16_to_int(pPlayer->q16ang) & 2047] >> 9), pPlayer->pos.z };
 
-    A_DamageWall(pPlayer->i, wallNum, &davect, -1);
+    A_DamageWall(pPlayer->i, wallNum, davect, -1);
 }
 
 static void P_CheckTouchDamage(DukePlayer_t *pPlayer, int touchObject)
@@ -4098,7 +4112,7 @@ static void P_ProcessWeapon(int playerNum)
                     int pipeBombZvel;
                     int pipeBombFwdVel;
 
-                    if (pPlayer->on_ground && (TEST_SYNC_KEY(playerBits, SK_CROUCH) ^ pPlayer->crouch_toggle))
+                    if (pPlayer->on_ground && TEST_SYNC_KEY(playerBits, SK_CROUCH))
                     {
                         pipeBombFwdVel = 15;
                         pipeBombZvel   = (fix16_to_int(pPlayer->q16horiz + pPlayer->q16horizoff - F16(100)) * 20);
@@ -4175,7 +4189,7 @@ static void P_ProcessWeapon(int playerNum)
                 {
                     if (!(PWEAPON(playerNum, pPlayer->curr_weapon, Flags) & WEAPON_NOVISIBLE))
                     {
-                        lastvisinc = totalclock+32;
+                        lastvisinc = (int32_t) totalclock+32;
                         pPlayer->visibility = 0;
                     }
 
@@ -5041,7 +5055,7 @@ void P_ProcessInput(int playerNum)
         if (pPlayer->pos.z < (floorZ-(floorZOffset<<8)))  //falling
         {
             // not jumping or crouching
-            if ((!TEST_SYNC_KEY(playerBits, SK_JUMP) && !(TEST_SYNC_KEY(playerBits, SK_CROUCH) ^ pPlayer->crouch_toggle)) && pPlayer->on_ground &&
+            if ((!TEST_SYNC_KEY(playerBits, SK_JUMP) && !(TEST_SYNC_KEY(playerBits, SK_CROUCH))) && pPlayer->on_ground &&
                 (sector[pPlayer->cursectnum].floorstat & 2) && pPlayer->pos.z >= (floorZ - (floorZOffset << 8) - ZOFFSET2))
                 pPlayer->pos.z = floorZ - (floorZOffset << 8);
             else
@@ -5137,7 +5151,7 @@ void P_ProcessInput(int playerNum)
                 }
             }
 
-            if (TEST_SYNC_KEY(playerBits, SK_CROUCH) ^ pPlayer->crouch_toggle)
+            if (TEST_SYNC_KEY(playerBits, SK_CROUCH))
             {
                 // crouching
                 if (VM_OnEvent(EVENT_CROUCH,pPlayer->i,playerNum) == 0)
@@ -5339,7 +5353,7 @@ void P_ProcessInput(int playerNum)
 
         if (sectorLotag == ST_2_UNDERWATER)
             playerSpeedReduction = 0x1400;
-        else if (((pPlayer->on_ground && (TEST_SYNC_KEY(playerBits, SK_CROUCH) ^ pPlayer->crouch_toggle))
+        else if (((pPlayer->on_ground && TEST_SYNC_KEY(playerBits, SK_CROUCH))
                   || (*weaponFrame > 10 && PWEAPON(playerNum, pPlayer->curr_weapon, WorksLike) == KNEE_WEAPON)))
             playerSpeedReduction = 0x2000;
 
@@ -5643,7 +5657,6 @@ HORIZONLY:;
 }
 
 
-#define SJSON_IMPLEMENT
 #include "sjson.h"
 
 int portableBackupSave(const char * path, const char * name, int volume, int level)
