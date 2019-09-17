@@ -949,7 +949,7 @@ ifeq ($$(PLATFORM),DARWIN)
 	cp -f "$$($1_$2)$$(EXESUFFIX)" "$$($1_$2_proper).app/Contents/MacOS/"
 endif
 ifeq ($$(PLATFORM),SWITCH)
-	nacptool --create "EDuke32" "EDuke32 Team, Cpasjuste, fgsfds" "r$(VC_REV)-1" $$($1_$2).nacp
+	nacptool --create "EDuke32" "EDuke32 Team, Cpasjuste, fgsfds" "r$(VC_REV)-2" $$($1_$2).nacp
 	elf2nro $$@ $$($1_$2).nro --icon=platform/Switch/icon.jpg --nacp=$$($1_$2).nacp
 endif
 

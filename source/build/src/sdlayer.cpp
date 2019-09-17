@@ -721,7 +721,7 @@ void uninitsystem(void)
     win_uninit();
 #endif
 
-#ifdef USE_OPENGL && !defined __SWITCH__
+#if defined USE_OPENGL && !defined __SWITCH__
 # if SDL_MAJOR_VERSION!=1
     SDL_GL_UnloadLibrary();
 # endif
